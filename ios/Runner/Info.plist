@@ -4,6 +4,10 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Huddle discovers and connects to nearby devices on your local network to share messages and photos.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Huddle needs access to your photos so you can share them with paired devices.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
