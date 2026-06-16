@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:network_info_plus/network_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
@@ -167,12 +166,35 @@ class HuddleController extends ChangeNotifier {
 
   Future<void> _loadNetworkInfo() async {
     try {
-      wifiIp = await NetworkInfo().getWifiIP();
+      wifiIp = await _detectLocalIp();
       notifyListeners();
     } catch (_) {
-      // Permission denied or unsupported platform — non fatal.
+      // Unsupported platform / no network — non fatal.
     }
   }
+
+  /// Finds this device's LAN IPv4 address using the platform's network
+  /// interfaces (no plugin, no special permissions). Prefers a private
+  /// (RFC 1918) address, falling back to the first non-loopback IPv4.
+  Future<String?> _detectLocalIp() async {
+    final interfaces = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+      includeLoopback: false,
+      includeLinkLocal: false,
+    );
+    final addresses = [
+      for (final iface in interfaces) ...iface.addresses.map((a) => a.address),
+    ];
+    for (final ip in addresses) {
+      if (_isPrivateIp(ip)) return ip;
+    }
+    return addresses.isEmpty ? null : addresses.first;
+  }
+
+  bool _isPrivateIp(String ip) =>
+      ip.startsWith('10.') ||
+      ip.startsWith('192.168.') ||
+      RegExp(r'^172\.(1[6-9]|2\d|3[01])\.').hasMatch(ip);
 
   Future<void> renameSelf(String newName) async {
     await identity.rename(_prefs, newName);
