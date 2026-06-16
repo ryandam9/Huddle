@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 
 import '../models/device.dart';
 import '../state/huddle_controller.dart';
-import '../ui_helpers.dart';
 import 'chat_screen.dart';
 import 'home_screen.dart';
 
@@ -32,7 +31,7 @@ class DashboardScreen extends StatelessWidget {
                 ? const _EmptyState()
                 : ListView.separated(
                     itemCount: devices.length,
-                    separatorBuilder: (_, __) =>
+                    separatorBuilder: (_, _) =>
                         const Divider(height: 1, indent: 72),
                     itemBuilder: (_, i) => _DeviceTile(device: devices[i]),
                   ),
@@ -136,17 +135,13 @@ class _DeviceTile extends StatelessWidget {
     );
   }
 
-  Future<void> _pair(
-      BuildContext context, HuddleController controller, Device device) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final outcome = await controller.requestPairing(device);
-    final text = switch (outcome) {
-      PairOutcome.sent => 'Pairing request sent to ${device.name}.',
-      PairOutcome.alreadyPaired => 'Already paired with ${device.name}.',
-      PairOutcome.unreachable =>
-        'Could not reach ${device.name}. Is it still online?',
-    };
-    messenger.showSnackBar(SnackBar(content: Text(text)));
+  void _pair(BuildContext context, HuddleController controller, Device device) {
+    controller.startPairing(device);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PairingCodeDialog(),
+    );
   }
 
   void _openChat(
@@ -186,6 +181,137 @@ class _EmptyState extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Shown to the *initiator* after tapping Pair: displays the one-time code to
+/// read out to the other person and reflects the handshake's progress.
+class PairingCodeDialog extends StatelessWidget {
+  const PairingCodeDialog({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<HuddleController>(
+      builder: (context, controller, _) {
+        final pairing = controller.outgoingPairing;
+        // Cleared out from under us — nothing left to show.
+        if (pairing == null) return const SizedBox.shrink();
+
+        final scheme = Theme.of(context).colorScheme;
+
+        void close() {
+          controller.cancelPairing();
+          Navigator.of(context).pop();
+        }
+
+        switch (pairing.status) {
+          case PairStatus.waiting:
+            return AlertDialog(
+              title: Text('Pair with ${pairing.peerName}'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Enter this code on ${pairing.peerName} to confirm:',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _spaced(pairing.code),
+                    style: TextStyle(
+                      fontSize: 36,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 8,
+                      color: scheme.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2)),
+                      const SizedBox(width: 12),
+                      Text('Waiting for ${pairing.peerName}…'),
+                    ],
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(onPressed: close, child: const Text('Cancel')),
+              ],
+            );
+
+          case PairStatus.success:
+            return _ResultDialog(
+              icon: Icons.check_circle,
+              color: Colors.green,
+              message: 'Paired with ${pairing.peerName}.',
+              onClose: close,
+            );
+          case PairStatus.declined:
+            return _ResultDialog(
+              icon: Icons.cancel,
+              color: scheme.error,
+              message: '${pairing.peerName} declined the request.',
+              onClose: close,
+            );
+          case PairStatus.mismatch:
+            return _ResultDialog(
+              icon: Icons.error,
+              color: scheme.error,
+              message: "The code didn't match. Try pairing again.",
+              onClose: close,
+            );
+          case PairStatus.unreachable:
+            return _ResultDialog(
+              icon: Icons.wifi_off,
+              color: scheme.error,
+              message: 'Could not reach ${pairing.peerName}.',
+              onClose: close,
+            );
+        }
+      },
+    );
+  }
+
+  /// "048213" -> "048 213" for readability.
+  String _spaced(String code) {
+    final mid = code.length ~/ 2;
+    return '${code.substring(0, mid)} ${code.substring(mid)}';
+  }
+}
+
+class _ResultDialog extends StatelessWidget {
+  const _ResultDialog({
+    required this.icon,
+    required this.color,
+    required this.message,
+    required this.onClose,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String message;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 48),
+          const SizedBox(height: 16),
+          Text(message, textAlign: TextAlign.center),
+        ],
+      ),
+      actions: [
+        FilledButton(onPressed: onClose, child: const Text('Done')),
+      ],
     );
   }
 }

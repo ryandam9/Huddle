@@ -24,7 +24,7 @@ Huddle is fully decentralised — there is no server.
 | -------------- | --------- |
 | **Discovery**  | UDP broadcast beacons on port `48710`. Each device announces its id, name, platform and TCP port every few seconds and listens for others. |
 | **Transport**  | TCP with newline-delimited JSON frames. Each message opens a short-lived connection, making the protocol stateless and robust. |
-| **Agreement**  | A `pair_request` frame triggers an Accept/Decline prompt; on accept both sides persist each other as a paired *peer*. |
+| **Agreement**  | A three-step, code-verified handshake: the initiator shows a one-time 6-digit code, the other device's user types it in (`pair_response`), and the initiator confirms only on a match (`pair_confirm`). Both sides then persist each other as a paired *peer*. |
 | **Sharing**    | `text` and `photo` (base64) frames flow only between paired peers. Received photos are written to the app's documents directory. |
 | **Persistence**| Identity, paired peers and conversations are stored via `shared_preferences`; photos on disk via `path_provider`. |
 

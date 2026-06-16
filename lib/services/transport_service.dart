@@ -14,18 +14,16 @@ import 'protocol.dart';
 class TransportService {
   TransportService({
     required this.id,
-    required String name,
+    required this.name,
     required this.platform,
-  }) : _name = name;
+  });
 
   /// This device's identity, stamped into every outbound frame's `from` field
-  /// so the receiver knows who we are and how to reply.
+  /// so the receiver knows who we are and how to reply. [name] is mutable so
+  /// the advertised display name can change when the user renames the device.
   final String id;
   final String platform;
-  String _name;
-
-  /// Updates the advertised display name (e.g. after the user renames).
-  set name(String value) => _name = value;
+  String name;
 
   /// Invoked for every decoded inbound frame.
   void Function(IncomingFrame frame)? onFrame;
@@ -41,7 +39,7 @@ class TransportService {
   }
 
   Endpoint get _localEndpoint =>
-      Endpoint(id: id, name: _name, platform: platform, port: port);
+      Endpoint(id: id, name: name, platform: platform, port: port);
 
   void _handleConnection(Socket socket) {
     final remoteHost = socket.remoteAddress.address;

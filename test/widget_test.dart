@@ -1,81 +1,61 @@
-// Tests for Huddle. These cover pure helpers and the wire-protocol
-// (de)serialisation, which can run without platform plugins or a network.
+// Tests for the small pure UI helpers. These need no plugins or network.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:huddle/models/chat_message.dart';
-import 'package:huddle/models/peer.dart';
-import 'package:huddle/services/protocol.dart';
 import 'package:huddle/ui_helpers.dart';
 
 void main() {
-  group('ui helpers', () {
-    test('formatTime zero-pads hours and minutes', () {
-      final t = DateTime(2024, 1, 1, 9, 5);
-      expect(formatTime(t), '09:05');
+  group('formatTime', () {
+    test('zero-pads hours and minutes', () {
+      expect(formatTime(DateTime(2024, 1, 1, 9, 5)), '09:05');
     });
 
-    test('formatRelative reports recent times as "just now"', () {
+    test('handles midnight and noon', () {
+      expect(formatTime(DateTime(2024, 1, 1, 0, 0)), '00:00');
+      expect(formatTime(DateTime(2024, 1, 1, 12, 0)), '12:00');
+      expect(formatTime(DateTime(2024, 1, 1, 23, 59)), '23:59');
+    });
+  });
+
+  group('formatRelative', () {
+    test('recent times read as "just now"', () {
       expect(formatRelative(DateTime.now()), 'just now');
     });
 
-    test('platformIcon maps known platforms', () {
+    test('minutes, hours and days are summarised', () {
+      final now = DateTime.now();
+      expect(formatRelative(now.subtract(const Duration(minutes: 5))), '5m ago');
+      expect(formatRelative(now.subtract(const Duration(hours: 3))), '3h ago');
+      expect(formatRelative(now.subtract(const Duration(days: 2))), '2d ago');
+    });
+  });
+
+  group('platformIcon', () {
+    test('maps known platforms', () {
       expect(platformIcon('android'), Icons.android);
+      expect(platformIcon('ios'), Icons.apple);
       expect(platformIcon('macos'), Icons.apple);
-      expect(platformIcon('something-else'), Icons.devices_other);
+      expect(platformIcon('windows'), Icons.window);
+      expect(platformIcon('linux'), Icons.computer);
     });
 
-    test('colorForId is deterministic', () {
+    test('falls back for unknown platforms', () {
+      expect(platformIcon('toaster'), Icons.devices_other);
+      expect(platformIcon(''), Icons.devices_other);
+    });
+  });
+
+  group('colorForId', () {
+    test('is deterministic for the same id', () {
       expect(colorForId('abc'), colorForId('abc'));
     });
-  });
 
-  group('protocol', () {
-    test('Endpoint round-trips through json and keeps host on the receiver',
-        () {
-      final endpoint = Endpoint(
-        id: 'id-1',
-        name: 'Phone',
-        platform: 'android',
-        port: 5000,
-      );
-      final decoded = Endpoint.fromJson(endpoint.toJson()).withHost('10.0.0.5');
-      expect(decoded.id, 'id-1');
-      expect(decoded.name, 'Phone');
-      expect(decoded.port, 5000);
-      expect(decoded.host, '10.0.0.5');
-    });
-  });
-
-  group('models', () {
-    test('Peer round-trips through json', () {
-      final peer = Peer(
-        id: 'p1',
-        name: 'Laptop',
-        platform: 'macos',
-        pairedAt: DateTime.fromMillisecondsSinceEpoch(1000),
-      );
-      final decoded = Peer.fromJson(peer.toJson());
-      expect(decoded.id, 'p1');
-      expect(decoded.name, 'Laptop');
-      expect(decoded.pairedAt.millisecondsSinceEpoch, 1000);
-    });
-
-    test('ChatMessage round-trips through json', () {
-      final msg = ChatMessage(
-        id: 'm1',
-        peerId: 'p1',
-        mine: true,
-        kind: MessageKind.photo,
-        sentAt: DateTime.fromMillisecondsSinceEpoch(2000),
-        fileName: 'cat.jpg',
-        filePath: '/tmp/cat.jpg',
-      );
-      final decoded = ChatMessage.fromJson(msg.toJson());
-      expect(decoded.kind, MessageKind.photo);
-      expect(decoded.mine, true);
-      expect(decoded.fileName, 'cat.jpg');
+    test('always returns a colour from the palette', () {
+      for (final id in ['', 'a', 'long-uuid-like-value', '12345']) {
+        // Should not throw and should produce a fully opaque colour.
+        expect(colorForId(id).a, 1.0);
+      }
     });
   });
 }

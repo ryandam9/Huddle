@@ -24,7 +24,7 @@ class HuddlesScreen extends StatelessWidget {
           ? const _EmptyHuddles()
           : ListView.separated(
               itemCount: peers.length,
-              separatorBuilder: (_, __) =>
+              separatorBuilder: (_, _) =>
                   const Divider(height: 1, indent: 72),
               itemBuilder: (_, i) =>
                   _PeerTile(peer: peers[i], controller: controller),

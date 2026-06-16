@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../services/pairing.dart';
 import '../services/protocol.dart';
 import '../state/huddle_controller.dart';
 import '../ui_helpers.dart';
@@ -23,35 +24,65 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Register the prompt handler once the controller is available.
+    // Register the pairing handlers once the controller is available.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<HuddleController>().onPairRequest = _promptPairRequest;
+      final controller = context.read<HuddleController>();
+      controller.onPairRequest = _promptPairRequest;
+      controller.onNotice = _showNotice;
     });
   }
 
-  Future<bool> _promptPairRequest(Endpoint from) async {
-    if (!mounted) return false;
-    final accepted = await showDialog<bool>(
+  void _showNotice(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Prompts the user to type the code shown on the requesting device. Returns
+  /// the entered code, or null if they decline.
+  Future<String?> _promptPairRequest(Endpoint from) async {
+    if (!mounted) return null;
+    final field = TextEditingController();
+    final code = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Pairing request'),
-        content: Text(
-          '"${from.name}" (${from.platform}) wants to huddle with you.\n\n'
-          'Accept to start sharing messages and photos.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '"${from.name}" (${from.platform}) wants to huddle.\n\n'
+              'Enter the code shown on their screen to confirm:',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: field,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.center,
+              maxLength: kPairingCodeLength,
+              style: const TextStyle(fontSize: 24, letterSpacing: 6),
+              decoration: const InputDecoration(
+                counterText: '',
+                hintText: '••••••',
+              ),
+              onSubmitted: (v) => Navigator.of(ctx).pop(v),
+            ),
+          ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
+            onPressed: () => Navigator.of(ctx).pop(),
             child: const Text('Decline'),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Accept'),
+            onPressed: () => Navigator.of(ctx).pop(field.text),
+            child: const Text('Confirm'),
           ),
         ],
       ),
     );
-    return accepted ?? false;
+    return (code == null || code.trim().isEmpty) ? null : code.trim();
   }
 
   @override
