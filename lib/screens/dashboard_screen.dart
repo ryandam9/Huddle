@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 
 import '../models/device.dart';
 import '../state/huddle_controller.dart';
-import '../ui_helpers.dart';
 import 'chat_screen.dart';
 import 'home_screen.dart';
 
@@ -32,7 +31,7 @@ class DashboardScreen extends StatelessWidget {
                 ? const _EmptyState()
                 : ListView.separated(
                     itemCount: devices.length,
-                    separatorBuilder: (_, __) =>
+                    separatorBuilder: (_, _) =>
                         const Divider(height: 1, indent: 72),
                     itemBuilder: (_, i) => _DeviceTile(device: devices[i]),
                   ),
