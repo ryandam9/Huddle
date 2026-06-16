@@ -67,6 +67,23 @@ void main() {
     expect(frame.from.name, 'Renamed');
   });
 
+  test('carries a pairing-response code across the wire', () async {
+    final received = Completer<IncomingFrame>();
+    receiver.onFrame = (frame) {
+      if (!received.isCompleted) received.complete(frame);
+    };
+
+    await sender.send('127.0.0.1', receiver.port, FrameType.pairResponse, {
+      'accepted': true,
+      'code': '048213',
+    });
+
+    final frame = await received.future.timeout(const Duration(seconds: 5));
+    expect(frame.type, FrameType.pairResponse);
+    expect(frame.data['accepted'], isTrue);
+    expect(frame.data['code'], '048213');
+  });
+
   test('send returns false for an unreachable port', () async {
     // Port 1 is privileged/closed in test sandboxes → connection fails fast.
     final ok = await sender.send('127.0.0.1', 1, FrameType.text, {'text': 'x'});

@@ -11,7 +11,10 @@ library;
 const String kAppTag = 'huddle';
 
 /// Protocol version, bumped on incompatible changes.
-const int kProtocolVersion = 1;
+///
+/// v2 introduced the pairing-code handshake (`pair_confirm` + a `code` carried
+/// on `pair_response`).
+const int kProtocolVersion = 2;
 
 /// UDP port used for presence beacons. Fixed so every device listens on the
 /// same port.
@@ -21,9 +24,16 @@ const int kDiscoveryPort = 48710;
 const Duration kBeaconInterval = Duration(seconds: 3);
 
 /// Frame types exchanged over the TCP transport.
+///
+/// Pairing is a three-step handshake guarded by a one-time code:
+///  1. initiator → `pair_request`
+///  2. receiver  → `pair_response` (carries the code the user typed in)
+///  3. initiator → `pair_confirm`  (accepts only if the code matched the one
+///     it displayed)
 class FrameType {
   static const String pairRequest = 'pair_request';
   static const String pairResponse = 'pair_response';
+  static const String pairConfirm = 'pair_confirm';
   static const String text = 'text';
   static const String photo = 'photo';
   static const String unpair = 'unpair';

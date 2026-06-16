@@ -12,12 +12,44 @@ import '../models/device.dart';
 import '../models/peer.dart';
 import '../services/discovery_service.dart';
 import '../services/identity.dart';
+import '../services/pairing.dart';
 import '../services/protocol.dart';
 import '../services/storage_service.dart';
 import '../services/transport_service.dart';
 
-/// Result of attempting to start a new pairing with a device.
-enum PairOutcome { sent, alreadyPaired, unreachable }
+/// Progress of an outgoing pairing the user has started.
+enum PairStatus {
+  /// Request sent; waiting for the other device to enter our code.
+  waiting,
+
+  /// Code matched — both devices are now paired.
+  success,
+
+  /// The other device declined the request.
+  declined,
+
+  /// The other device typed the wrong code.
+  mismatch,
+
+  /// We could not reach the other device.
+  unreachable,
+}
+
+/// A pairing the local user initiated, surfaced to the UI so it can show the
+/// code and react to the outcome.
+class OutgoingPairing {
+  OutgoingPairing({
+    required this.peerId,
+    required this.peerName,
+    required this.code,
+    this.status = PairStatus.waiting,
+  });
+
+  final String peerId;
+  final String peerName;
+  final String code;
+  PairStatus status;
+}
 
 /// Central application state and coordinator.
 ///
@@ -51,9 +83,20 @@ class HuddleController extends ChangeNotifier {
   String? wifiIp;
   bool ready = false;
 
-  /// Set by the UI to prompt the user about incoming pairing requests.
-  /// Returns true to accept the agreement.
-  Future<bool> Function(Endpoint from)? onPairRequest;
+  /// The pairing the local user is currently initiating, if any.
+  OutgoingPairing? outgoingPairing;
+
+  /// Codes we generated and displayed for outgoing pairings, keyed by peer id,
+  /// used to verify the code the other device echoes back.
+  final Map<String, String> _pendingCodes = {};
+
+  /// Set by the UI to prompt the user when another device requests pairing.
+  /// Should return the code the user typed in, or null if they declined.
+  Future<String?> Function(Endpoint from)? onPairRequest;
+
+  /// Set by the UI to surface transient pairing notices (e.g. "Paired with X"
+  /// or a failed code) that arrive asynchronously.
+  void Function(String message)? onNotice;
 
   // --- Read-only views -----------------------------------------------------
 
@@ -182,12 +225,37 @@ class HuddleController extends ChangeNotifier {
           String host, int port, String type, Map<String, dynamic> data) =>
       _transport?.send(host, port, type, data) ?? Future.value(false);
 
-  /// Initiates a pairing agreement with [device].
-  Future<PairOutcome> requestPairing(Device device) async {
-    if (isPaired(device.id)) return PairOutcome.alreadyPaired;
-    final ok =
-        await _send(device.host, device.port, FrameType.pairRequest, const {});
-    return ok ? PairOutcome.sent : PairOutcome.unreachable;
+  /// Initiates a pairing agreement with [device]. Generates a one-time code,
+  /// surfaces it via [outgoingPairing] for the UI to display, and sends the
+  /// request. The other device's user must type this code to complete the
+  /// handshake. Returns the generated code.
+  String startPairing(Device device) {
+    final code = generatePairingCode();
+    _pendingCodes[device.id] = code;
+    outgoingPairing = OutgoingPairing(
+      peerId: device.id,
+      peerName: device.name,
+      code: code,
+    );
+    notifyListeners();
+
+    _send(device.host, device.port, FrameType.pairRequest, const {}).then((ok) {
+      // Only react if this is still the active pairing for that device.
+      if (!ok && outgoingPairing?.peerId == device.id) {
+        _pendingCodes.remove(device.id);
+        outgoingPairing!.status = PairStatus.unreachable;
+        notifyListeners();
+      }
+    });
+    return code;
+  }
+
+  /// Clears the active outgoing pairing (e.g. the user dismissed the dialog).
+  void cancelPairing() {
+    final pending = outgoingPairing;
+    if (pending != null) _pendingCodes.remove(pending.peerId);
+    outgoingPairing = null;
+    notifyListeners();
   }
 
   Future<bool> sendText(String peerId, String text) async {
@@ -283,6 +351,9 @@ class HuddleController extends ChangeNotifier {
       case FrameType.pairResponse:
         _onPairResponse(frame);
         break;
+      case FrameType.pairConfirm:
+        _onPairConfirm(frame);
+        break;
       case FrameType.text:
         _onText(frame);
         break;
@@ -295,28 +366,58 @@ class HuddleController extends ChangeNotifier {
     }
   }
 
+  /// Step 2 (receiver): prompt the user to type the code shown on the
+  /// initiator's screen, then echo it back. We do *not* add the peer yet —
+  /// that waits for the initiator's `pair_confirm` once it has verified the
+  /// code.
   Future<void> _onPairRequest(Endpoint from) async {
-    // Re-pairing with a known peer needs no prompt.
-    final accept = isPaired(from.id)
-        ? true
-        : (await onPairRequest?.call(from) ?? false);
-
-    if (accept) {
-      _addPeer(from, system: 'You are now connected with ${from.name}.');
-    }
+    final code = await onPairRequest?.call(from);
+    final accepted = code != null && code.trim().isNotEmpty;
     await _send(from.host, from.port, FrameType.pairResponse, {
-      'accepted': accept,
+      'accepted': accepted,
+      if (accepted) 'code': code.trim(),
     });
   }
 
+  /// Step 3a (initiator): verify the code the receiver echoed back against the
+  /// one we displayed. On a match we pair and confirm; otherwise we reject.
   void _onPairResponse(IncomingFrame frame) {
+    final expected = _pendingCodes.remove(frame.from.id);
+    final pending = outgoingPairing;
+    final isActive = pending != null && pending.peerId == frame.from.id;
+
+    final accepted = (frame.data['accepted'] as bool?) ?? false;
+    if (!accepted) {
+      if (isActive) pending.status = PairStatus.declined;
+      notifyListeners();
+      return;
+    }
+
+    final code = frame.data['code'] as String?;
+    if (pairingCodeMatches(expected, code)) {
+      _addPeer(frame.from,
+          system: 'You are now connected with ${frame.from.name}.');
+      _send(frame.from.host, frame.from.port, FrameType.pairConfirm,
+          {'accepted': true});
+      if (isActive) pending.status = PairStatus.success;
+    } else {
+      _send(frame.from.host, frame.from.port, FrameType.pairConfirm,
+          {'accepted': false});
+      if (isActive) pending.status = PairStatus.mismatch;
+    }
+    notifyListeners();
+  }
+
+  /// Step 3b (receiver): the initiator verified the code. Commit the agreement
+  /// on a positive confirmation; otherwise let the user know it failed.
+  void _onPairConfirm(IncomingFrame frame) {
     final accepted = (frame.data['accepted'] as bool?) ?? false;
     if (accepted) {
       _addPeer(frame.from,
-          system: '${frame.from.name} accepted your request.');
+          system: 'You are now connected with ${frame.from.name}.');
+      onNotice?.call('Paired with ${frame.from.name}.');
     } else {
-      // Surface the rejection in any existing conversation context only if we
-      // already know them; otherwise nothing to show.
+      onNotice?.call("Pairing failed — the code didn't match.");
     }
   }
 
