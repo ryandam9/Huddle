@@ -7,8 +7,8 @@ plugins {
 android {
     namespace = "net.ryandam.huddle"
     // Pinned to 36: transitive plugin deps (flutter_plugin_android_lifecycle,
-    // pulled in by file_picker / network_info_plus) require compiling against
-    // Android API 36+. This is independent of minSdk / targetSdk.
+    // pulled in by file_picker) require compiling against Android API 36+.
+    // This is independent of minSdk / targetSdk.
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
