@@ -1,17 +1,87 @@
-# huddle
+# Huddle
 
-A new Flutter project.
+Huddle is a cross-platform Flutter app for **sharing messages and photos
+directly between devices on the same local network** — no account, no cloud,
+no internet required. Everything happens peer-to-peer over your Wi-Fi/LAN.
 
-## Getting Started
+## What it does
 
-This project is a starting point for a Flutter application.
+1. **Dashboard of devices** — every device running Huddle on the same network
+   is discovered automatically and listed, with a live online/offline
+   indicator.
+2. **Agreements (pairing)** — before two devices can talk, one sends a pairing
+   request and the other explicitly **accepts**. This handshake is the
+   "agreement". Only paired devices may exchange content.
+3. **Sharing** — once paired, devices can exchange **text messages** and
+   **photos** in a familiar chat interface. Conversation history is stored
+   locally on each device.
 
-A few resources to get you started if this is your first Flutter project:
+## How it works
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Huddle is fully decentralised — there is no server.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+| Concern        | Mechanism |
+| -------------- | --------- |
+| **Discovery**  | UDP broadcast beacons on port `48710`. Each device announces its id, name, platform and TCP port every few seconds and listens for others. |
+| **Transport**  | TCP with newline-delimited JSON frames. Each message opens a short-lived connection, making the protocol stateless and robust. |
+| **Agreement**  | A `pair_request` frame triggers an Accept/Decline prompt; on accept both sides persist each other as a paired *peer*. |
+| **Sharing**    | `text` and `photo` (base64) frames flow only between paired peers. Received photos are written to the app's documents directory. |
+| **Persistence**| Identity, paired peers and conversations are stored via `shared_preferences`; photos on disk via `path_provider`. |
+
+The wire protocol lives in [`lib/services/protocol.dart`](lib/services/protocol.dart).
+
+## Project layout
+
+```
+lib/
+  main.dart                     App entry + theme + provider wiring
+  ui_helpers.dart               Small formatting / icon helpers
+  models/
+    device.dart                 A device seen on the network (transient)
+    peer.dart                   A paired device / standing agreement
+    chat_message.dart           A text/photo/system message
+  services/
+    protocol.dart               Shared wire-protocol definitions
+    identity.dart               This device's persistent id + display name
+    discovery_service.dart      UDP broadcast presence (beacons)
+    transport_service.dart      TCP server + one-shot frame sender
+    storage_service.dart        Persistence for peers, history and media
+  state/
+    huddle_controller.dart      ChangeNotifier orchestrating everything
+  screens/
+    home_screen.dart            Bottom-nav shell + pairing prompt
+    dashboard_screen.dart       Devices on the network
+    huddles_screen.dart         List of paired conversations
+    chat_screen.dart            A one-to-one conversation
+    settings_screen.dart        Identity, network info, agreements
+```
+
+## Running
+
+```bash
+flutter pub get
+flutter run        # pick a device; run on two devices on the same Wi-Fi
+flutter test       # unit tests for helpers, protocol and models
+```
+
+To try it end-to-end, run Huddle on two devices connected to the same
+network (e.g. two phones, or a phone and a desktop). They will appear on each
+other's **Devices** tab; pair from one, accept on the other, then chat.
+
+## Platform notes
+
+- **Android** — network and `NEARBY_WIFI_DEVICES` permissions are declared,
+  and `MainActivity` holds a `MulticastLock` so broadcast beacons are
+  received.
+- **iOS** — `NSLocalNetworkUsageDescription` and a photo-library usage string
+  are set; iOS shows a local-network permission prompt on first launch.
+- **macOS** — the client and server network entitlements are enabled for both
+  debug and release.
+- **Desktop (Linux/Windows/macOS)** — works out of the box on the same LAN.
+
+## Limitations
+
+- Photos are sent inline as base64, which is fine for typical images but not
+  intended for very large files.
+- Discovery relies on UDP broadcast; networks that isolate clients (guest
+  Wi-Fi, "AP isolation") will prevent devices from seeing each other.
