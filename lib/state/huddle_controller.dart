@@ -82,6 +82,9 @@ class HuddleController extends ChangeNotifier {
   String? wifiIp;
   bool ready = false;
 
+  int _discoveryPort = kDiscoveryPort;
+  String? _customBroadcast;
+
   /// The pairing the local user is currently initiating, if any.
   OutgoingPairing? outgoingPairing;
 
@@ -125,9 +128,19 @@ class HuddleController extends ChangeNotifier {
   int get totalUnread => _unread.values.fold(0, (a, b) => a + b);
 
   /// The TCP port the transport server is listening on (0 if not started).
-  /// Exposed for tests to address a controller over loopback.
-  @visibleForTesting
   int get tcpPort => _transport?.port ?? 0;
+
+  /// The UDP port used for discovery beacons.
+  int get discoveryPort => _discoveryPort;
+
+  /// Optional user-configured extra broadcast address (null if unset).
+  String? get customBroadcast => _customBroadcast;
+
+  /// The broadcast addresses discovery is currently sending beacons to.
+  Future<List<String>> broadcastTargets() async {
+    final targets = await _discovery?.broadcastTargets();
+    return targets?.map((a) => a.address).toList() ?? const [];
+  }
 
   /// Injects a discovered device as if a presence beacon had been heard.
   /// Lets tests wire two controllers together without relying on UDP
@@ -148,6 +161,9 @@ class HuddleController extends ChangeNotifier {
       _conversations[peer.id] = _storage.loadMessages(peer.id);
     }
 
+    _discoveryPort = _storage.loadDiscoveryPort();
+    _customBroadcast = _storage.loadCustomBroadcast();
+
     // Networking may fail to start in restricted environments; keep the app
     // usable (history is still visible) rather than blocking on the spinner.
     try {
@@ -159,8 +175,12 @@ class HuddleController extends ChangeNotifier {
       _transport!.onFrame = _handleFrame;
       await _transport!.start();
 
-      _discovery =
-          DiscoveryService(identity: identity, tcpPort: _transport!.port);
+      _discovery = DiscoveryService(
+        identity: identity,
+        tcpPort: _transport!.port,
+        discoveryPort: _discoveryPort,
+        customBroadcast: _customBroadcast,
+      );
       _discovery!.onBeacon = _handleBeacon;
       await _discovery!.start();
 
@@ -212,6 +232,42 @@ class HuddleController extends ChangeNotifier {
     await identity.rename(_prefs, newName);
     // Refresh the name used in outbound frames and beacons.
     _transport?.name = identity.name;
+    notifyListeners();
+  }
+
+  /// Triggers an on-demand scan: asks other devices to announce now.
+  void refreshDiscovery() => _discovery?.refresh();
+
+  /// Sets (or clears, when null/blank) an extra broadcast address for unusual
+  /// networks. Applied immediately; no restart needed.
+  Future<void> setCustomBroadcast(String? address) async {
+    final v = address?.trim();
+    _customBroadcast = (v == null || v.isEmpty) ? null : v;
+    await _storage.saveCustomBroadcast(_customBroadcast);
+    _discovery?.customBroadcast = _customBroadcast;
+    notifyListeners();
+  }
+
+  /// Changes the discovery (UDP) port and restarts discovery on it. The port
+  /// must match on every device, so callers should warn the user.
+  Future<void> setDiscoveryPort(int port) async {
+    if (port == _discoveryPort) return;
+    _discoveryPort = port;
+    await _storage.saveDiscoveryPort(port);
+
+    await _discovery?.dispose();
+    try {
+      _discovery = DiscoveryService(
+        identity: identity,
+        tcpPort: tcpPort,
+        discoveryPort: _discoveryPort,
+        customBroadcast: _customBroadcast,
+      );
+      _discovery!.onBeacon = _handleBeacon;
+      await _discovery!.start();
+    } catch (e) {
+      debugPrint('Huddle: failed to restart discovery on port $port: $e');
+    }
     notifyListeners();
   }
 

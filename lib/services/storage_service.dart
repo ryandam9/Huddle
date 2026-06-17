@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/chat_message.dart';
 import '../models/peer.dart';
+import 'protocol.dart';
 
 /// Persists paired peers, conversation history and received photo bytes.
 class StorageService {
@@ -15,6 +16,29 @@ class StorageService {
 
   static const _peersKey = 'huddle.peers';
   static String _msgsKey(String peerId) => 'huddle.msgs.$peerId';
+  static const _broadcastKey = 'huddle.net.broadcast';
+  static const _portKey = 'huddle.net.port';
+
+  // --- Network settings ----------------------------------------------------
+
+  String? loadCustomBroadcast() {
+    final v = _prefs.getString(_broadcastKey)?.trim();
+    return (v == null || v.isEmpty) ? null : v;
+  }
+
+  Future<void> saveCustomBroadcast(String? address) async {
+    final v = address?.trim();
+    if (v == null || v.isEmpty) {
+      await _prefs.remove(_broadcastKey);
+    } else {
+      await _prefs.setString(_broadcastKey, v);
+    }
+  }
+
+  int loadDiscoveryPort() => _prefs.getInt(_portKey) ?? kDiscoveryPort;
+
+  Future<void> saveDiscoveryPort(int port) =>
+      _prefs.setInt(_portKey, port);
 
   // --- Peers ---------------------------------------------------------------
 
