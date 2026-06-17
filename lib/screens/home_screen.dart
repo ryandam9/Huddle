@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../responsive.dart';
 import '../services/pairing.dart';
 import '../services/protocol.dart';
 import '../state/huddle_controller.dart';
-import '../ui_helpers.dart';
 import 'dashboard_screen.dart';
-import 'huddles_screen.dart';
+import 'messages_screen.dart';
 import 'settings_screen.dart';
 
-/// Top-level shell hosting the three sections of the app and wiring the
-/// incoming-pairing prompt to a dialog.
+/// Top-level responsive shell: a bottom navigation bar on phones and a side
+/// navigation rail on tablets/desktop. Also wires the pairing prompt + notices.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -24,7 +24,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Register the pairing handlers once the controller is available.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final controller = context.read<HuddleController>();
       controller.onPairRequest = _promptPairRequest;
@@ -38,8 +37,6 @@ class _HomeScreenState extends State<HomeScreen> {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Prompts the user to type the code shown on the requesting device. Returns
-  /// the entered code, or null if they decline.
   Future<String?> _promptPairRequest(Endpoint from) async {
     if (!mounted) return null;
     final field = TextEditingController();
@@ -90,77 +87,124 @@ class _HomeScreenState extends State<HomeScreen> {
     final controller = context.watch<HuddleController>();
 
     if (!controller.ready) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     final pages = const [
       DashboardScreen(),
-      HuddlesScreen(),
+      MessagesScreen(),
       SettingsScreen(),
     ];
 
+    final destinations = <_Destination>[
+      const _Destination(Icons.wifi_tethering_outlined, Icons.wifi_tethering,
+          'Devices'),
+      _Destination(Icons.forum_outlined, Icons.forum, 'Huddles',
+          badge: controller.totalUnread),
+      const _Destination(Icons.settings_outlined, Icons.settings, 'Settings'),
+    ];
+
+    if (context.isCompact) {
+      return Scaffold(
+        body: pages[_index],
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _index,
+          onDestinationSelected: (i) => setState(() => _index = i),
+          destinations: [
+            for (final d in destinations)
+              NavigationDestination(
+                icon: _badged(d.icon, d.badge),
+                selectedIcon: _badged(d.selectedIcon, d.badge),
+                label: d.label,
+              ),
+          ],
+        ),
+      );
+    }
+
+    // Tablet / desktop: navigation rail beside the content.
+    final extended = context.isLargeWidth;
     return Scaffold(
-      body: pages[_index],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: [
-          const NavigationDestination(
-            icon: Icon(Icons.wifi_tethering),
-            label: 'Devices',
+      body: Row(
+        children: [
+          NavigationRail(
+            extended: extended,
+            minWidth: 76,
+            minExtendedWidth: 200,
+            selectedIndex: _index,
+            onDestinationSelected: (i) => setState(() => _index = i),
+            leading: Padding(
+              padding: EdgeInsets.symmetric(
+                  vertical: 16, horizontal: extended ? 8 : 0),
+              child: _BrandMark(extended: extended),
+            ),
+            labelType: extended
+                ? NavigationRailLabelType.none
+                : NavigationRailLabelType.all,
+            destinations: [
+              for (final d in destinations)
+                NavigationRailDestination(
+                  icon: _badged(d.icon, d.badge),
+                  selectedIcon: _badged(d.selectedIcon, d.badge),
+                  label: Text(d.label),
+                ),
+            ],
           ),
-          NavigationDestination(
-            icon: _HuddlesIcon(count: controller.totalUnread),
-            label: 'Huddles',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
+          const VerticalDivider(width: 1),
+          Expanded(child: pages[_index]),
         ],
       ),
     );
   }
-}
 
-/// Huddles tab icon with an unread badge.
-class _HuddlesIcon extends StatelessWidget {
-  const _HuddlesIcon({required this.count});
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    if (count == 0) return const Icon(Icons.forum_outlined);
-    return Badge(
-      label: Text('$count'),
-      child: const Icon(Icons.forum),
-    );
+  Widget _badged(IconData icon, int badge) {
+    if (badge <= 0) return Icon(icon);
+    return Badge(label: Text('$badge'), child: Icon(icon));
   }
 }
 
-/// Small reusable avatar used across screens.
-class HuddleAvatar extends StatelessWidget {
-  const HuddleAvatar({
-    super.key,
-    required this.id,
-    required this.name,
-    required this.platform,
-    this.radius = 22,
-  });
+class _Destination {
+  const _Destination(this.icon, this.selectedIcon, this.label,
+      {this.badge = 0});
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+  final int badge;
+}
 
-  final String id;
-  final String name;
-  final String platform;
-  final double radius;
+/// Wordmark shown at the top of the navigation rail.
+class _BrandMark extends StatelessWidget {
+  const _BrandMark({required this.extended});
+  final bool extended;
 
   @override
   Widget build(BuildContext context) {
-    return CircleAvatar(
-      radius: radius,
-      backgroundColor: colorForId(id),
-      child: Icon(platformIcon(platform), color: Colors.white, size: radius),
+    final scheme = Theme.of(context).colorScheme;
+    final logo = Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [scheme.primary, scheme.tertiary],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Icon(Icons.groups_rounded, color: Colors.white, size: 24),
+    );
+
+    if (!extended) return logo;
+    return Row(
+      children: [
+        logo,
+        const SizedBox(width: 12),
+        Text('Huddle',
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w700)),
+      ],
     );
   }
 }
