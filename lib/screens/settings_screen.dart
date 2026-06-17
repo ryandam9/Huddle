@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../state/huddle_controller.dart';
 import '../widgets/common.dart';
+import 'help_screen.dart';
 
 /// Identity, network info and active agreements. Content is centered and
 /// width-constrained so it looks intentional on wide desktop windows.
@@ -69,6 +70,20 @@ class SettingsScreen extends StatelessWidget {
                           ],
                         ],
                       ),
+              ),
+              const SizedBox(height: 24),
+              _SectionLabel('Support'),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.support),
+                  title: const Text('Help & troubleshooting'),
+                  subtitle:
+                      const Text("Devices not finding each other? Start here."),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const HelpScreen()),
+                  ),
+                ),
               ),
               const SizedBox(height: 24),
               _SectionLabel('About'),

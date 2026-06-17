@@ -12,6 +12,7 @@ import 'package:huddle/models/chat_message.dart';
 import 'package:huddle/services/identity.dart';
 import 'package:huddle/state/huddle_controller.dart';
 import 'package:huddle/screens/dashboard_screen.dart';
+import 'package:huddle/screens/help_screen.dart';
 import 'package:huddle/screens/messages_screen.dart';
 import 'package:huddle/theme.dart';
 import 'package:huddle/widgets/common.dart';
@@ -164,6 +165,44 @@ void main() {
     testWidgets('shows an empty state with no huddles', (tester) async {
       await pumpApp(tester, FakeController(), const MessagesScreen());
       expect(find.text('No huddles yet'), findsOneWidget);
+    });
+  });
+
+  group('HelpScreen', () {
+    testWidgets('renders the intro and the main troubleshooting topic',
+        (tester) async {
+      tester.view.devicePixelRatio = 2.0;
+      tester.view.physicalSize = const Size(400 * 2, 1000 * 2);
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        MaterialApp(theme: HuddleTheme.light(), home: const HelpScreen()),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Trouble connecting?'), findsOneWidget);
+      expect(find.text("The other device isn't showing up"), findsOneWidget);
+      // That topic is expanded by default, so its first step is visible.
+      expect(find.textContaining('Put both devices on the same'),
+          findsOneWidget);
+    });
+
+    testWidgets('expands a collapsed topic when tapped', (tester) async {
+      tester.view.devicePixelRatio = 2.0;
+      tester.view.physicalSize = const Size(400 * 2, 1000 * 2);
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        MaterialApp(theme: HuddleTheme.light(), home: const HelpScreen()),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('A 6'), findsNothing); // collapsed
+      await tester.scrollUntilVisible(
+          find.text('How do I connect two devices?'), 300);
+      await tester.tap(find.text('How do I connect two devices?'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('A 6'), findsWidgets); // now revealed
     });
   });
 }

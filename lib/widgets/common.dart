@@ -91,11 +91,15 @@ class EmptyStateView extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.message,
+    this.action,
   });
 
   final IconData icon;
   final String title;
   final String message;
+
+  /// Optional call-to-action shown below the message (e.g. a Help button).
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -131,6 +135,10 @@ class EmptyStateView extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
               ),
+              if (action != null) ...[
+                const SizedBox(height: 20),
+                action!,
+              ],
             ],
           ),
         ),
