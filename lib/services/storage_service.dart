@@ -10,14 +10,26 @@ import 'protocol.dart';
 
 /// Persists paired peers, conversation history and received photo bytes.
 class StorageService {
-  StorageService(this._prefs);
+  StorageService(this._prefs) {
+    _customDownloadDir = loadCustomDownloadDir();
+  }
 
   final SharedPreferences _prefs;
+
+  /// In-memory copy of the user's chosen download folder (null = default).
+  /// Kept here so [saveIncomingPhoto] doesn't have to hit prefs per file.
+  String? _customDownloadDir;
+  set customDownloadDir(String? path) {
+    final v = path?.trim();
+    _customDownloadDir = (v == null || v.isEmpty) ? null : v;
+  }
 
   static const _peersKey = 'huddle.peers';
   static String _msgsKey(String peerId) => 'huddle.msgs.$peerId';
   static const _broadcastKey = 'huddle.net.broadcast';
   static const _portKey = 'huddle.net.port';
+  static const _downloadDirKey = 'huddle.media.dir';
+  static const _notifyKey = 'huddle.media.notify';
 
   // --- Network settings ----------------------------------------------------
 
@@ -39,6 +51,32 @@ class StorageService {
 
   Future<void> saveDiscoveryPort(int port) =>
       _prefs.setInt(_portKey, port);
+
+  // --- Download settings ---------------------------------------------------
+
+  /// A user-chosen folder for received files, or null to use the default
+  /// app folder. Mostly useful on desktop where users expect a real folder
+  /// (e.g. their Downloads directory).
+  String? loadCustomDownloadDir() {
+    final v = _prefs.getString(_downloadDirKey)?.trim();
+    return (v == null || v.isEmpty) ? null : v;
+  }
+
+  Future<void> saveCustomDownloadDir(String? path) async {
+    final v = path?.trim();
+    if (v == null || v.isEmpty) {
+      await _prefs.remove(_downloadDirKey);
+    } else {
+      await _prefs.setString(_downloadDirKey, v);
+    }
+  }
+
+  /// Whether to surface an in-app notification when content is received.
+  /// Defaults to on so the user is aware of incoming files and messages.
+  bool loadNotifyOnReceive() => _prefs.getBool(_notifyKey) ?? true;
+
+  Future<void> saveNotifyOnReceive(bool enabled) =>
+      _prefs.setBool(_notifyKey, enabled);
 
   // --- Peers ---------------------------------------------------------------
 
@@ -97,9 +135,33 @@ class StorageService {
     return file.path;
   }
 
-  Future<Directory> _mediaDir() async {
+  /// Absolute path of the folder where received files are (or would be)
+  /// stored, honouring a user-chosen folder when set. Safe to call for
+  /// display: it resolves the path but does not require the folder to exist.
+  Future<String> resolveMediaPath() async {
+    if (_customDownloadDir != null) return _customDownloadDir!;
     final base = await getApplicationDocumentsDirectory();
-    final dir = Directory('${base.path}/huddle_media');
+    return '${base.path}/huddle_media';
+  }
+
+  /// Checks that [path] can be used as a download folder by ensuring it can
+  /// be created/written. Returns true on success.
+  Future<bool> canUseDownloadDir(String path) async {
+    try {
+      final dir = Directory(path.trim());
+      if (!await dir.exists()) await dir.create(recursive: true);
+      // Confirm we can actually write into it.
+      final probe = File('${dir.path}/.huddle_write_test');
+      await probe.writeAsString('ok', flush: true);
+      await probe.delete();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<Directory> _mediaDir() async {
+    final dir = Directory(await resolveMediaPath());
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }

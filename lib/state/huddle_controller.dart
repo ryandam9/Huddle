@@ -86,6 +86,15 @@ class HuddleController extends ChangeNotifier {
   int _discoveryPort = kDiscoveryPort;
   String? _customBroadcast;
 
+  /// User-chosen folder for received files (null = default app folder).
+  String? _customDownloadDir;
+
+  /// Resolved absolute path of the current download folder, cached for the UI.
+  String? _downloadLocation;
+
+  /// Whether to surface an in-app notification when content is received.
+  bool _notifyOnReceive = true;
+
   /// The pairing the local user is currently initiating, if any.
   OutgoingPairing? outgoingPairing;
 
@@ -137,6 +146,16 @@ class HuddleController extends ChangeNotifier {
   /// Optional user-configured extra broadcast address (null if unset).
   String? get customBroadcast => _customBroadcast;
 
+  /// Absolute path of the folder where received files are saved. Null only
+  /// briefly during startup before it has been resolved.
+  String? get downloadLocation => _downloadLocation;
+
+  /// True when the user has chosen a custom download folder (vs. the default).
+  bool get isCustomDownloadDir => _customDownloadDir != null;
+
+  /// Whether incoming files and messages raise an in-app notification.
+  bool get notifyOnReceive => _notifyOnReceive;
+
   /// The broadcast addresses discovery is currently sending beacons to.
   Future<List<String>> broadcastTargets() async {
     final targets = await _discovery?.broadcastTargets();
@@ -164,6 +183,15 @@ class HuddleController extends ChangeNotifier {
 
     _discoveryPort = _storage.loadDiscoveryPort();
     _customBroadcast = _storage.loadCustomBroadcast();
+    _customDownloadDir = _storage.loadCustomDownloadDir();
+    _notifyOnReceive = _storage.loadNotifyOnReceive();
+    // Resolving the default folder touches the platform (path_provider); keep
+    // startup resilient on platforms/tests where that's unavailable.
+    try {
+      _downloadLocation = await _storage.resolveMediaPath();
+    } catch (e) {
+      debugPrint('Huddle: could not resolve download folder: $e');
+    }
 
     // Networking may fail to start in restricted environments; keep the app
     // usable (history is still visible) rather than blocking on the spinner.
@@ -269,6 +297,31 @@ class HuddleController extends ChangeNotifier {
     } catch (e) {
       debugPrint('Huddle: failed to restart discovery on port $port: $e');
     }
+    notifyListeners();
+  }
+
+  /// Changes the folder where received files are saved. Pass null to restore
+  /// the default app folder. Returns false (without changing anything) if the
+  /// folder can't be created or written to. Existing files are left in place.
+  Future<bool> setDownloadDirectory(String? path) async {
+    final v = path?.trim();
+    if (v != null && v.isNotEmpty) {
+      final ok = await _storage.canUseDownloadDir(v);
+      if (!ok) return false;
+    }
+    _customDownloadDir = (v == null || v.isEmpty) ? null : v;
+    _storage.customDownloadDir = _customDownloadDir;
+    await _storage.saveCustomDownloadDir(_customDownloadDir);
+    _downloadLocation = await _storage.resolveMediaPath();
+    notifyListeners();
+    return true;
+  }
+
+  /// Turns the in-app "received" notifications on or off.
+  Future<void> setNotifyOnReceive(bool enabled) async {
+    if (enabled == _notifyOnReceive) return;
+    _notifyOnReceive = enabled;
+    await _storage.saveNotifyOnReceive(enabled);
     notifyListeners();
   }
 
@@ -544,6 +597,7 @@ class HuddleController extends ChangeNotifier {
       bumpUnread: true,
     );
     _tick(); // felt a new message arrive
+    _notifyReceived('New message from ${frame.from.name}');
   }
 
   Future<void> _onPhoto(IncomingFrame frame) async {
@@ -576,6 +630,13 @@ class HuddleController extends ChangeNotifier {
       bumpUnread: true,
     );
     _tick(); // felt a new photo arrive
+    _notifyReceived('Saved "$name" from ${frame.from.name}');
+  }
+
+  /// Raises a transient in-app notice for received content, when the user has
+  /// notifications enabled. Reuses the same channel as pairing notices.
+  void _notifyReceived(String message) {
+    if (_notifyOnReceive) onNotice?.call(message);
   }
 
   void _onUnpair(Endpoint from) {

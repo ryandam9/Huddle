@@ -2,7 +2,9 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:huddle/services/storage_service.dart';
 import 'package:huddle/ui_helpers.dart';
 
 void main() {
@@ -43,6 +45,40 @@ void main() {
     test('falls back for unknown platforms', () {
       expect(platformIcon('toaster'), Icons.devices_other);
       expect(platformIcon(''), Icons.devices_other);
+    });
+  });
+
+  group('StorageService download settings', () {
+    test('notifications default to on and persist when toggled', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final storage = StorageService(prefs);
+
+      expect(storage.loadNotifyOnReceive(), isTrue);
+      await storage.saveNotifyOnReceive(false);
+      expect(storage.loadNotifyOnReceive(), isFalse);
+    });
+
+    test('custom download folder round-trips and clears', () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final storage = StorageService(prefs);
+
+      expect(storage.loadCustomDownloadDir(), isNull);
+      await storage.saveCustomDownloadDir('/tmp/huddle-test');
+      expect(storage.loadCustomDownloadDir(), '/tmp/huddle-test');
+
+      await storage.saveCustomDownloadDir('   ');
+      expect(storage.loadCustomDownloadDir(), isNull);
+    });
+
+    test('resolveMediaPath honours a custom folder', () async {
+      SharedPreferences.setMockInitialValues(
+          {'huddle.media.dir': '/tmp/huddle-custom'});
+      final prefs = await SharedPreferences.getInstance();
+      final storage = StorageService(prefs);
+
+      expect(await storage.resolveMediaPath(), '/tmp/huddle-custom');
     });
   });
 
