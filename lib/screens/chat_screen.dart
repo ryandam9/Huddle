@@ -52,7 +52,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendPhoto(HuddleController controller) async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.image);
+    final result = await FilePicker.pickFiles(type: FileType.image);
     final path = result?.files.single.path;
     if (path == null) return;
 
