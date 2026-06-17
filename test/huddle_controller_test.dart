@@ -2,6 +2,8 @@
 // API against a real controller backed by mocked SharedPreferences. The
 // transport/discovery sockets bind on loopback but are not relied upon here.
 
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -189,6 +191,54 @@ void main() {
     test('refreshDiscovery does not throw', () async {
       final c = await start();
       expect(c.refreshDiscovery, returnsNormally);
+    });
+  });
+
+  group('download settings', () {
+    test('notify-on-receive defaults on and persists when toggled', () async {
+      final c = await start();
+      expect(c.notifyOnReceive, isTrue);
+
+      await c.setNotifyOnReceive(false);
+      expect(c.notifyOnReceive, isFalse);
+
+      final reloaded = await start();
+      expect(reloaded.notifyOnReceive, isFalse);
+    });
+
+    test('a writable custom folder is accepted, applied and persisted',
+        () async {
+      final dir = Directory.systemTemp.createTempSync('huddle_ctrl_');
+      addTearDown(() {
+        if (dir.existsSync()) dir.deleteSync(recursive: true);
+      });
+
+      final c = await start();
+      final ok = await c.setDownloadDirectory(dir.path);
+      expect(ok, isTrue);
+      expect(c.isCustomDownloadDir, isTrue);
+      expect(c.downloadLocation, dir.path);
+
+      // A fresh controller over the same store keeps the chosen folder.
+      final reloaded = await start();
+      expect(reloaded.isCustomDownloadDir, isTrue);
+      expect(reloaded.downloadLocation, dir.path);
+    });
+
+    test('an unusable folder is rejected and leaves settings unchanged',
+        () async {
+      final c = await start();
+      // A path under a file (not a directory) can't be created.
+      final probe = File(
+          '${Directory.systemTemp.path}/huddle_not_a_dir_${DateTime.now().microsecondsSinceEpoch}');
+      await probe.writeAsString('x');
+      addTearDown(() {
+        if (probe.existsSync()) probe.deleteSync();
+      });
+
+      final ok = await c.setDownloadDirectory('${probe.path}/sub');
+      expect(ok, isFalse);
+      expect(c.isCustomDownloadDir, isFalse);
     });
   });
 }
