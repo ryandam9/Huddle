@@ -191,7 +191,7 @@ class _BrandMark extends StatelessWidget {
         ),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: const Icon(Icons.groups_rounded, color: Colors.white, size: 24),
+      child: const Icon(Icons.devices_rounded, color: Colors.white, size: 24),
     );
 
     if (!extended) return logo;
