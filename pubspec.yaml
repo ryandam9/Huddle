@@ -45,7 +45,10 @@ dependencies:
   path_provider: ^2.1.5
 
   # Picking photos to share (works on mobile and desktop).
-  file_picker: ^8.1.6
+  # v11+ compiles its Android module against a current SDK (34 in older
+  # releases broke the build now that its transitive
+  # flutter_plugin_android_lifecycle dependency requires compileSdk 36).
+  file_picker: ^11.0.0
 
   # Stable identifiers for this device.
   uuid: ^4.5.1
