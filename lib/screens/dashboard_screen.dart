@@ -6,6 +6,7 @@ import '../responsive.dart';
 import '../state/huddle_controller.dart';
 import '../widgets/common.dart';
 import 'chat_screen.dart';
+import 'help_screen.dart';
 
 /// Lists devices discovered on the local network and lets the user start a
 /// code-verified pairing with any of them. Responsive: a list on phones, a
@@ -22,6 +23,13 @@ class DashboardScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Devices'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.help_outline),
+            tooltip: 'Help & troubleshooting',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const HelpScreen()),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: _ScanningChip(count: devices.length),
@@ -33,11 +41,18 @@ class DashboardScreen extends StatelessWidget {
           _NetworkBanner(name: controller.identity.name, ip: controller.wifiIp),
           Expanded(
             child: devices.isEmpty
-                ? const EmptyStateView(
+                ? EmptyStateView(
                     icon: Icons.radar,
                     title: 'Looking for devices…',
                     message: 'Open Huddle on another device on the same Wi-Fi '
                         'network and it will appear here automatically.',
+                    action: OutlinedButton.icon(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const HelpScreen()),
+                      ),
+                      icon: const Icon(Icons.help_outline),
+                      label: const Text('Not seeing your device?'),
+                    ),
                   )
                 : _DeviceCollection(devices: devices),
           ),

@@ -8,10 +8,14 @@ import 'protocol.dart';
 /// Broadcasts this device's presence and listens for other devices' beacons
 /// on the local network using UDP broadcast.
 ///
-/// Every [kBeaconInterval] a small JSON beacon is sent to the broadcast
-/// address advertising this device's id, name, platform and the TCP port its
-/// transport server listens on. Incoming beacons are surfaced via [onBeacon]
-/// together with the sender's IP address.
+/// Every [kBeaconInterval] a small JSON beacon is sent advertising this
+/// device's id, name, platform and the TCP port its transport server listens
+/// on. Beacons go to the limited broadcast address (255.255.255.255) *and* to
+/// each interface's subnet-directed broadcast (e.g. 192.168.0.255). The latter
+/// matters on machines with several interfaces (Ethernet + Wi-Fi, a VPN, or
+/// VM/Docker adapters): a packet to 255.255.255.255 only leaves the default
+/// interface, so without the directed broadcast the beacon may never reach the
+/// Wi-Fi other devices are on.
 class DiscoveryService {
   DiscoveryService({required this.identity, required this.tcpPort});
 
@@ -21,8 +25,6 @@ class DiscoveryService {
   final int tcpPort;
 
   /// Called for every beacon heard from *another* device.
-  ///
-  /// [host] is the sender's IP; [endpoint] carries its advertised details.
   void Function(String host, Endpoint endpoint)? onBeacon;
 
   RawDatagramSocket? _socket;
@@ -66,7 +68,7 @@ class DiscoveryService {
     onBeacon?.call(datagram.address.address, endpoint);
   }
 
-  void _broadcast() {
+  Future<void> _broadcast() async {
     final socket = _socket;
     if (socket == null) return;
 
@@ -80,11 +82,38 @@ class DiscoveryService {
       'port': tcpPort,
     }));
 
-    try {
-      socket.send(payload, InternetAddress('255.255.255.255'), kDiscoveryPort);
-    } catch (_) {
-      // Broadcast can transiently fail (e.g. network change); ignore.
+    for (final target in await _broadcastTargets()) {
+      try {
+        socket.send(payload, target, kDiscoveryPort);
+      } catch (_) {
+        // A transient failure on one interface shouldn't stop the others.
+      }
     }
+  }
+
+  /// The set of addresses to beacon to: the limited broadcast plus each active
+  /// IPv4 interface's subnet broadcast (assuming a /24, which covers typical
+  /// home networks — dart:io does not expose interface netmasks).
+  Future<List<InternetAddress>> _broadcastTargets() async {
+    final targets = <String>{'255.255.255.255'};
+    try {
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: false,
+        includeLinkLocal: false,
+      );
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          final parts = addr.address.split('.');
+          if (parts.length == 4) {
+            targets.add('${parts[0]}.${parts[1]}.${parts[2]}.255');
+          }
+        }
+      }
+    } catch (_) {
+      // Fall back to the limited broadcast only.
+    }
+    return targets.map(InternetAddress.new).toList();
   }
 
   /// reusePort is unsupported on Windows; enabling it there throws.
