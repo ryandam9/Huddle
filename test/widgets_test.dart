@@ -27,6 +27,10 @@ class FakeController extends HuddleController {
   List<Device> devicesList;
   List<Peer> peersList;
   String? startedPairingFor;
+  int refreshes = 0;
+
+  @override
+  void refreshDiscovery() => refreshes++;
 
   @override
   Future<void> init() async {}
@@ -133,6 +137,25 @@ void main() {
         (tester) async {
       await pumpApp(tester, FakeController(), const DashboardScreen());
       expect(find.text('Looking for devices…'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Scan again'), findsOneWidget);
+    });
+
+    testWidgets('app-bar refresh triggers an on-demand scan', (tester) async {
+      final c = FakeController(devicesList: [_device('d1', 'MacBook', 'macos')]);
+      await pumpApp(tester, c, const DashboardScreen());
+
+      await tester.tap(find.byIcon(Icons.refresh));
+      await tester.pump();
+      expect(c.refreshes, 1);
+    });
+
+    testWidgets('empty-state "Scan again" triggers a scan', (tester) async {
+      final c = FakeController();
+      await pumpApp(tester, c, const DashboardScreen());
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Scan again'));
+      await tester.pump();
+      expect(c.refreshes, 1);
     });
 
     testWidgets('tapping Pair starts pairing and shows the code dialog',

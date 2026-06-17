@@ -151,4 +151,44 @@ void main() {
     expect(c.deviceFor('d1')!.host, '192.168.1.50');
     expect(c.isOnline('d1'), isTrue);
   });
+
+  group('network settings', () {
+    test('defaults to the standard port and automatic broadcast', () async {
+      final c = await start();
+      expect(c.discoveryPort, kDiscoveryPort);
+      expect(c.customBroadcast, isNull);
+    });
+
+    test('broadcast targets always include the limited broadcast', () async {
+      final c = await start();
+      expect(await c.broadcastTargets(), contains('255.255.255.255'));
+    });
+
+    test('setting a custom broadcast persists and is broadcast to', () async {
+      final c = await start();
+      await c.setCustomBroadcast('192.168.5.255');
+      expect(c.customBroadcast, '192.168.5.255');
+      expect(await c.broadcastTargets(), contains('192.168.5.255'));
+
+      final reloaded = await start();
+      expect(reloaded.customBroadcast, '192.168.5.255');
+    });
+
+    test('setting the discovery port persists and restarts discovery',
+        () async {
+      final c = await start();
+      await c.setDiscoveryPort(50777);
+      expect(c.discoveryPort, 50777);
+      // Discovery still works (limited broadcast still computed).
+      expect(await c.broadcastTargets(), contains('255.255.255.255'));
+
+      final reloaded = await start();
+      expect(reloaded.discoveryPort, 50777);
+    });
+
+    test('refreshDiscovery does not throw', () async {
+      final c = await start();
+      expect(c.refreshDiscovery, returnsNormally);
+    });
+  });
 }

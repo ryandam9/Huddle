@@ -23,6 +23,12 @@ const int kDiscoveryPort = 48710;
 /// How often a presence beacon is broadcast.
 const Duration kBeaconInterval = Duration(seconds: 3);
 
+/// UDP discovery message types.
+/// A [kBeaconType] announces presence; a [kProbeType] asks everyone who hears
+/// it to announce immediately (used for on-demand "Discover devices").
+const String kBeaconType = 'beacon';
+const String kProbeType = 'probe';
+
 /// Frame types exchanged over the TCP transport.
 ///
 /// Pairing is a three-step handshake guarded by a one-time code:

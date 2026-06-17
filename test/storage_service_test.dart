@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:huddle/models/chat_message.dart';
 import 'package:huddle/models/peer.dart';
+import 'package:huddle/services/protocol.dart';
 import 'package:huddle/services/storage_service.dart';
 
 void main() {
@@ -93,6 +94,30 @@ void main() {
       ]);
       expect(storage.loadMessages('p1'), hasLength(1));
       expect(storage.loadMessages('p2'), isEmpty);
+    });
+  });
+
+  group('network settings', () {
+    test('sensible defaults', () {
+      expect(storage.loadDiscoveryPort(), kDiscoveryPort);
+      expect(storage.loadCustomBroadcast(), isNull);
+    });
+
+    test('discovery port persists', () async {
+      await storage.saveDiscoveryPort(50321);
+      expect(storage.loadDiscoveryPort(), 50321);
+    });
+
+    test('custom broadcast persists, and blank/null clears it', () async {
+      await storage.saveCustomBroadcast('192.168.0.255');
+      expect(storage.loadCustomBroadcast(), '192.168.0.255');
+
+      await storage.saveCustomBroadcast('   ');
+      expect(storage.loadCustomBroadcast(), isNull);
+
+      await storage.saveCustomBroadcast('10.0.0.255');
+      await storage.saveCustomBroadcast(null);
+      expect(storage.loadCustomBroadcast(), isNull);
     });
   });
 }

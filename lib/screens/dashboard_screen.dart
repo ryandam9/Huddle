@@ -24,6 +24,19 @@ class DashboardScreen extends StatelessWidget {
         title: const Text('Devices'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Scan for devices',
+            onPressed: () {
+              controller.refreshDiscovery();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Scanning for devices…'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.help_outline),
             tooltip: 'Help & troubleshooting',
             onPressed: () => Navigator.of(context).push(
@@ -46,15 +59,35 @@ class DashboardScreen extends StatelessWidget {
                     title: 'Looking for devices…',
                     message: 'Open Huddle on another device on the same Wi-Fi '
                         'network and it will appear here automatically.',
-                    action: OutlinedButton.icon(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const HelpScreen()),
-                      ),
-                      icon: const Icon(Icons.help_outline),
-                      label: const Text('Not seeing your device?'),
+                    action: Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        FilledButton.tonalIcon(
+                          onPressed: controller.refreshDiscovery,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Scan again'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) => const HelpScreen()),
+                          ),
+                          icon: const Icon(Icons.help_outline),
+                          label: const Text('Not seeing your device?'),
+                        ),
+                      ],
                     ),
                   )
-                : _DeviceCollection(devices: devices),
+                : RefreshIndicator(
+                    onRefresh: () async {
+                      controller.refreshDiscovery();
+                      await Future<void>.delayed(
+                          const Duration(milliseconds: 1200));
+                    },
+                    child: _DeviceCollection(devices: devices),
+                  ),
           ),
         ],
       ),
@@ -160,6 +193,7 @@ class _DeviceCollection extends StatelessWidget {
   Widget build(BuildContext context) {
     if (context.isCompact) {
       return ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
         itemCount: devices.length,
         separatorBuilder: (_, _) => const SizedBox(height: 10),
@@ -167,6 +201,7 @@ class _DeviceCollection extends StatelessWidget {
       );
     }
     return GridView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 420,
