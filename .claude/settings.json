@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"${CLAUDE_PROJECT_DIR:-.}\"; [ -d \"$d/.agents/skills\" ] && { mkdir -p \"$d/.claude/skills\"; cp -r \"$d\"/.agents/skills/flutter-* \"$d/.claude/skills/\"; } 2>/dev/null || true",
+            "statusMessage": "Syncing Flutter skills into .claude/skills"
+          }
+        ]
+      }
+    ]
+  }
+}
