@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'screens/home_screen.dart';
 import 'state/huddle_controller.dart';
+import 'theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -19,17 +20,8 @@ class HuddleApp extends StatelessWidget {
       child: MaterialApp(
         title: 'Huddle',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF5C6BC0)),
-          useMaterial3: true,
-        ),
-        darkTheme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF5C6BC0),
-            brightness: Brightness.dark,
-          ),
-          useMaterial3: true,
-        ),
+        theme: HuddleTheme.light(),
+        darkTheme: HuddleTheme.dark(),
         home: const HomeScreen(),
       ),
     );
