@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../models/chat_message.dart';
@@ -52,8 +52,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendPhoto(HuddleController controller) async {
-    final result = await FilePicker.pickFiles(type: FileType.image);
-    final path = result?.files.single.path;
+    final picked =
+        await ImagePicker().pickImage(source: ImageSource.gallery);
+    final path = picked?.path;
     if (path == null) return;
 
     setState(() => _sending = true);
