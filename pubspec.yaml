@@ -44,11 +44,10 @@ dependencies:
   # Resolving the directory used to store received photos.
   path_provider: ^2.1.5
 
-  # Picking photos to share (works on mobile and desktop).
-  # v11+ compiles its Android module against a current SDK (34 in older
-  # releases broke the build now that its transitive
-  # flutter_plugin_android_lifecycle dependency requires compileSdk 36).
-  file_picker: ^11.0.0
+  # Picking photos to share. The official image_picker plugin (rather than
+  # file_picker, which applies its own Kotlin Gradle Plugin and breaks against
+  # current AGP/Kotlin toolchains).
+  image_picker: ^1.1.2
 
   # Stable identifiers for this device.
   uuid: ^4.5.1
