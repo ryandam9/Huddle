@@ -16,6 +16,7 @@ import 'package:huddle/screens/help_screen.dart';
 import 'package:huddle/screens/messages_screen.dart';
 import 'package:huddle/theme.dart';
 import 'package:huddle/widgets/common.dart';
+import 'package:huddle/widgets/scan_pulse.dart';
 
 class FakeController extends HuddleController {
   FakeController({this.devicesList = const [], this.peersList = const []}) {
@@ -112,6 +113,18 @@ void main() {
         ),
       ));
       expect(find.byIcon(Icons.android), findsOneWidget);
+    });
+
+    testWidgets('RadarPulse renders its center glyph (and keeps animating)',
+        (tester) async {
+      await tester.pumpWidget(const MaterialApp(
+        home: Scaffold(
+          body: Center(child: RadarPulse(icon: Icons.wifi_tethering)),
+        ),
+      ));
+      // Don't pumpAndSettle: the pulse repeats forever by design.
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byIcon(Icons.wifi_tethering), findsOneWidget);
     });
   });
 
