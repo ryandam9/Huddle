@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
 /// Central app theming. A single seed drives both light and dark schemes so
@@ -20,6 +21,17 @@ class HuddleTheme {
       useMaterial3: true,
       visualDensity: VisualDensity.adaptivePlatformDensity,
       scaffoldBackgroundColor: scheme.surface,
+      // Animate every pushed route: a modern zoom on most platforms, the
+      // native slide on iOS.
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: ZoomPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.macOS: ZoomPageTransitionsBuilder(),
+          TargetPlatform.windows: ZoomPageTransitionsBuilder(),
+          TargetPlatform.linux: ZoomPageTransitionsBuilder(),
+        },
+      ),
     );
 
     return base.copyWith(

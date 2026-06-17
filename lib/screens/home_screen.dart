@@ -106,7 +106,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (context.isCompact) {
       return Scaffold(
-        body: pages[_index],
+        body: _AnimatedPage(index: _index, child: pages[_index]),
         bottomNavigationBar: NavigationBar(
           selectedIndex: _index,
           onDestinationSelected: (i) => setState(() => _index = i),
@@ -151,7 +151,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           const VerticalDivider(width: 1),
-          Expanded(child: pages[_index]),
+          Expanded(child: _AnimatedPage(index: _index, child: pages[_index])),
         ],
       ),
     );
@@ -160,6 +160,33 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _badged(IconData icon, int badge) {
     if (badge <= 0) return Icon(icon);
     return Badge(label: Text('$badge'), child: Icon(icon));
+  }
+}
+
+/// Cross-fades (with a gentle upward slide) between the main sections when the
+/// selected tab changes.
+class _AnimatedPage extends StatelessWidget {
+  const _AnimatedPage({required this.index, required this.child});
+  final int index;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 280),
+      switchInCurve: Curves.easeOutCubic,
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.02),
+            end: Offset.zero,
+          ).animate(animation),
+          child: child,
+        ),
+      ),
+      child: KeyedSubtree(key: ValueKey(index), child: child),
+    );
   }
 }
 

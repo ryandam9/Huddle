@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/device.dart';
 import '../responsive.dart';
 import '../state/huddle_controller.dart';
 import '../widgets/common.dart';
+import '../widgets/scan_pulse.dart';
 import 'chat_screen.dart';
 import 'help_screen.dart';
 
@@ -23,19 +25,7 @@ class DashboardScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Devices'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Scan for devices',
-            onPressed: () {
-              controller.refreshDiscovery();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Scanning for devices…'),
-                  duration: Duration(seconds: 2),
-                ),
-              );
-            },
-          ),
+          const _ScanAction(),
           IconButton(
             icon: const Icon(Icons.help_outline),
             tooltip: 'Help & troubleshooting',
@@ -56,6 +46,7 @@ class DashboardScreen extends StatelessWidget {
             child: devices.isEmpty
                 ? EmptyStateView(
                     icon: Icons.radar,
+                    art: const RadarPulse(),
                     title: 'Looking for devices…',
                     message: 'Open Huddle on another device on the same Wi-Fi '
                         'network and it will appear here automatically.',
@@ -65,7 +56,10 @@ class DashboardScreen extends StatelessWidget {
                       alignment: WrapAlignment.center,
                       children: [
                         FilledButton.tonalIcon(
-                          onPressed: controller.refreshDiscovery,
+                          onPressed: () {
+                            HapticFeedback.selectionClick();
+                            controller.refreshDiscovery();
+                          },
                           icon: const Icon(Icons.refresh),
                           label: const Text('Scan again'),
                         ),
@@ -430,7 +424,14 @@ class _ResultDialog extends StatelessWidget {
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: color, size: 52),
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.4, end: 1),
+            duration: const Duration(milliseconds: 450),
+            curve: Curves.elasticOut,
+            builder: (_, scale, child) =>
+                Transform.scale(scale: scale, child: child),
+            child: Icon(icon, color: color, size: 52),
+          ),
           const SizedBox(height: 16),
           Text(message, textAlign: TextAlign.center),
         ],
@@ -438,6 +439,53 @@ class _ResultDialog extends StatelessWidget {
       actions: [
         FilledButton(onPressed: onClose, child: const Text('Done')),
       ],
+    );
+  }
+}
+
+/// App-bar "scan" button: spins on tap, gives a haptic tick, and triggers an
+/// on-demand discovery probe.
+class _ScanAction extends StatefulWidget {
+  const _ScanAction();
+
+  @override
+  State<_ScanAction> createState() => _ScanActionState();
+}
+
+class _ScanActionState extends State<_ScanAction>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 600),
+  );
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  void _scan() {
+    HapticFeedback.selectionClick();
+    _spin.forward(from: 0);
+    context.read<HuddleController>().refreshDiscovery();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Scanning for devices…'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'Scan for devices',
+      onPressed: _scan,
+      icon: RotationTransition(
+        turns: CurvedAnimation(parent: _spin, curve: Curves.easeOut),
+        child: const Icon(Icons.refresh),
+      ),
     );
   }
 }

@@ -92,6 +92,7 @@ class EmptyStateView extends StatelessWidget {
     required this.title,
     required this.message,
     this.action,
+    this.art,
   });
 
   final IconData icon;
@@ -100,6 +101,10 @@ class EmptyStateView extends StatelessWidget {
 
   /// Optional call-to-action shown below the message (e.g. a Help button).
   final Widget? action;
+
+  /// Optional custom artwork shown in place of the default icon circle
+  /// (e.g. an animated radar pulse).
+  final Widget? art;
 
   @override
   Widget build(BuildContext context) {
@@ -112,15 +117,16 @@ class EmptyStateView extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 96,
-                height: 96,
-                decoration: BoxDecoration(
-                  color: scheme.primaryContainer.withValues(alpha: 0.5),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, size: 44, color: scheme.primary),
-              ),
+              art ??
+                  Container(
+                    width: 96,
+                    height: 96,
+                    decoration: BoxDecoration(
+                      color: scheme.primaryContainer.withValues(alpha: 0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(icon, size: 44, color: scheme.primary),
+                  ),
               const SizedBox(height: 20),
               Text(
                 title,

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
@@ -490,6 +491,7 @@ class HuddleController extends ChangeNotifier {
       _send(frame.from.host, frame.from.port, FrameType.pairConfirm,
           {'accepted': true});
       if (isActive) pending.status = PairStatus.success;
+      _buzz(); // celebrate a successful pairing
     } else {
       _send(frame.from.host, frame.from.port, FrameType.pairConfirm,
           {'accepted': false});
@@ -506,9 +508,20 @@ class HuddleController extends ChangeNotifier {
       _addPeer(frame.from,
           system: 'You are now connected with ${frame.from.name}.');
       onNotice?.call('Paired with ${frame.from.name}.');
+      _buzz(); // celebrate a successful pairing
     } else {
       onNotice?.call("Pairing failed — the code didn't match.");
     }
+  }
+
+  /// A medium pulse for milestone events (pairing), a light tick for ambient
+  /// ones (incoming messages). No-op / harmless on platforms without haptics.
+  void _buzz() {
+    HapticFeedback.mediumImpact().catchError((_) {});
+  }
+
+  void _tick() {
+    HapticFeedback.lightImpact().catchError((_) {});
   }
 
   void _onText(IncomingFrame frame) {
@@ -530,6 +543,7 @@ class HuddleController extends ChangeNotifier {
       ),
       bumpUnread: true,
     );
+    _tick(); // felt a new message arrive
   }
 
   Future<void> _onPhoto(IncomingFrame frame) async {
@@ -561,6 +575,7 @@ class HuddleController extends ChangeNotifier {
       ),
       bumpUnread: true,
     );
+    _tick(); // felt a new photo arrive
   }
 
   void _onUnpair(Endpoint from) {
