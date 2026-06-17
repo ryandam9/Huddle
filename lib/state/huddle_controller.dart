@@ -124,6 +124,18 @@ class HuddleController extends ChangeNotifier {
 
   int get totalUnread => _unread.values.fold(0, (a, b) => a + b);
 
+  /// The TCP port the transport server is listening on (0 if not started).
+  /// Exposed for tests to address a controller over loopback.
+  @visibleForTesting
+  int get tcpPort => _transport?.port ?? 0;
+
+  /// Injects a discovered device as if a presence beacon had been heard.
+  /// Lets tests wire two controllers together without relying on UDP
+  /// broadcast delivery.
+  @visibleForTesting
+  void ingestBeacon(String host, Endpoint endpoint) =>
+      _upsertDevice(host, endpoint);
+
   // --- Lifecycle -----------------------------------------------------------
 
   Future<void> init() async {
