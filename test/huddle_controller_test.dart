@@ -182,6 +182,35 @@ void main() {
     expect(c.isOnline('d1'), isTrue);
   });
 
+  test('an unpaired device beacon is visible but is not made a peer', () async {
+    final c = await start();
+    c.ingestBeacon('192.168.1.9',
+        Endpoint(id: 'x', name: 'Stranger', platform: 'linux', port: 5001));
+
+    expect(c.deviceFor('x'), isNotNull); // on the dashboard…
+    expect(c.isPaired('x'), isFalse); // …but not an agreement
+    expect(c.peers, isEmpty);
+  });
+
+  test("a paired peer's advertised rename updates and persists the peer",
+      () async {
+    final prefs = await SharedPreferences.getInstance();
+    await StorageService(prefs).savePeers([
+      Peer(id: 'p1', name: 'Phone', platform: 'android', pairedAt: DateTime(2026)),
+    ]);
+    final c = await start();
+    expect(c.peers.single.name, 'Phone');
+
+    // The paired device reappears advertising a new name and platform.
+    c.ingestBeacon('192.168.1.9',
+        Endpoint(id: 'p1', name: 'Phone Pro', platform: 'ios', port: 5001));
+
+    expect(c.peers.single.name, 'Phone Pro');
+    expect(c.peers.single.platform, 'ios');
+    // Persisted, so the next launch shows the new name too.
+    expect(StorageService(prefs).loadPeers().single.name, 'Phone Pro');
+  });
+
   group('network settings', () {
     test('defaults to the standard port and automatic broadcast', () async {
       final c = await start();
