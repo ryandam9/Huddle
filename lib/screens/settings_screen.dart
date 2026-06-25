@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../responsive.dart';
 import '../state/huddle_controller.dart';
 import '../widgets/common.dart';
+import 'chat_screen.dart' show confirmEndHuddle;
 import 'help_screen.dart';
 import 'network_settings_screen.dart';
 
@@ -469,7 +470,7 @@ class _PeerRow extends StatelessWidget {
       trailing: IconButton(
         icon: const Icon(Icons.link_off),
         tooltip: 'End huddle',
-        onPressed: () => controller.unpair(peer.id),
+        onPressed: () => confirmEndHuddle(context, controller, peer),
       ),
     );
   }

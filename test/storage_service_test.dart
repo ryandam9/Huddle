@@ -144,6 +144,19 @@ void main() {
       expect(File(path).readAsBytesSync(), [1, 2, 3]);
     });
 
+    test('two files with the same name get distinct paths', () async {
+      final dest = Directory('${tmp.path}/downloads');
+      SharedPreferences.setMockInitialValues({'huddle.media.dir': dest.path});
+      final store = StorageService(await SharedPreferences.getInstance());
+
+      final a = await store.saveIncomingPhoto('pic.jpg', [1]);
+      final b = await store.saveIncomingPhoto('pic.jpg', [2]);
+
+      expect(a, isNot(b)); // no collision/overwrite
+      expect(File(a).readAsBytesSync(), [1]);
+      expect(File(b).readAsBytesSync(), [2]);
+    });
+
     test('falls back to the default folder when the custom one is unwritable',
         () async {
       // A file where a directory is expected makes the custom folder impossible

@@ -27,7 +27,8 @@ String formatTime(DateTime t) {
 /// A friendly relative description like "just now" / "3m ago".
 String formatRelative(DateTime t) {
   final diff = DateTime.now().difference(t);
-  if (diff.inSeconds < 45) return 'just now';
+  // A future timestamp (clock skew between devices) reads as "just now" too.
+  if (diff.isNegative || diff.inSeconds < 45) return 'just now';
   if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
   if (diff.inHours < 24) return '${diff.inHours}h ago';
   return '${diff.inDays}d ago';

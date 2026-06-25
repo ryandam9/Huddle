@@ -357,23 +357,37 @@ class HuddleController extends ChangeNotifier {
   /// must match on every device, so callers should warn the user.
   Future<void> setDiscoveryPort(int port) async {
     if (port == _discoveryPort) return;
-    _discoveryPort = port;
-    await _storage.saveDiscoveryPort(port);
-
+    final previous = _discoveryPort;
     await _discovery?.dispose();
+
+    // Restart first and only persist the new port if it actually came up;
+    // otherwise roll back to the previous (working) one so a bad port can't be
+    // saved and break discovery on the next launch.
+    if (await _startDiscoveryOn(port)) {
+      _discoveryPort = port;
+      await _storage.saveDiscoveryPort(port);
+    } else {
+      _discoveryPort = previous;
+      await _startDiscoveryOn(previous);
+    }
+    notifyListeners();
+  }
+
+  Future<bool> _startDiscoveryOn(int port) async {
     try {
       _discovery = DiscoveryService(
         identity: identity,
         tcpPort: tcpPort,
-        discoveryPort: _discoveryPort,
+        discoveryPort: port,
         customBroadcast: _customBroadcast,
       );
       _discovery!.onBeacon = _handleBeacon;
       await _discovery!.start();
+      return true;
     } catch (e) {
-      debugPrint('Huddle: failed to restart discovery on port $port: $e');
+      debugPrint('Huddle: failed to start discovery on port $port: $e');
+      return false;
     }
-    notifyListeners();
   }
 
   /// Changes the folder where received files are saved. Pass null to restore
@@ -434,11 +448,18 @@ class HuddleController extends ChangeNotifier {
 
   void _pruneDevices() {
     final now = DateTime.now();
+    final onlineBefore = {
+      for (final e in _devices.entries) e.key: e.value.isOnline,
+    };
+    final countBefore = _devices.length;
     _devices.removeWhere(
       (_, d) => now.difference(d.lastSeen) > const Duration(seconds: 30),
     );
-    // Even without removals, online flags may have flipped — refresh the UI.
-    notifyListeners();
+    // Only rebuild the UI when something visible actually changed — a device
+    // dropped, or an online flag flipped — rather than every 4 seconds.
+    final changed = _devices.length != countBefore ||
+        _devices.entries.any((e) => onlineBefore[e.key] != e.value.isOnline);
+    if (changed) notifyListeners();
   }
 
   // --- Outbound actions ----------------------------------------------------
