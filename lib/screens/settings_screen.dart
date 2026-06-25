@@ -1,6 +1,4 @@
 import 'package:file_selector/file_selector.dart' show getDirectoryPath;
-import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -225,15 +223,9 @@ class SettingsScreen extends StatelessWidget {
   /// Desktop platforms get a native folder picker (the only way a sandboxed
   /// macOS build can be granted write access to a folder outside its own
   /// container); elsewhere we fall back to entering a path by hand.
-  static bool get _isDesktop =>
-      !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.macOS ||
-          defaultTargetPlatform == TargetPlatform.windows ||
-          defaultTargetPlatform == TargetPlatform.linux);
-
   Future<void> _editDownloadDir(
           BuildContext context, HuddleController controller) =>
-      _isDesktop
+      isDesktopPlatform
           ? _chooseDownloadDir(context, controller)
           : _editDownloadDirManually(context, controller);
 
