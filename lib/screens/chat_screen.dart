@@ -422,8 +422,10 @@ class _Bubble extends StatelessWidget {
                     style: TextStyle(
                         fontSize: 10, color: fg.withValues(alpha: 0.7)),
                   ),
-                  if (message.mine && message.kind == MessageKind.text) ...[
+                  if (message.mine) ...[
                     const SizedBox(width: 4),
+                    // Shown for photos too, not just text, so a failed photo is
+                    // visible and retryable rather than silently stuck (#21).
                     _StatusTick(
                         status: message.status, tint: fg, onRetry: onRetry),
                   ],

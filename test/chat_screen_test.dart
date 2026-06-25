@@ -25,6 +25,7 @@ class _FakeChatController extends HuddleController {
 
   final List<ChatMessage> messages;
   int markReadCalls = 0;
+  int retryCalls = 0;
 
   /// Forces an unrelated rebuild (as device pruning / transfer progress would).
   void bump() => notifyListeners();
@@ -44,7 +45,10 @@ class _FakeChatController extends HuddleController {
   @override
   Future<bool> sendText(String id, String text) async => true;
   @override
-  bool retryMessage(String peerId, String mid) => false;
+  bool retryMessage(String peerId, String mid) {
+    retryCalls++;
+    return false;
+  }
 }
 
 void main() {
@@ -70,6 +74,18 @@ void main() {
         sentAt: DateTime(2026),
         filePath: path,
         fileName: 'p.png',
+      );
+
+  // An outgoing photo (placeholder render is fine; these tests assert the
+  // status tick, which is independent of the photo content).
+  ChatMessage minePhoto(MessageStatus status) => ChatMessage(
+        id: 'mine-ph',
+        peerId: 'p1',
+        mine: true,
+        kind: MessageKind.photo,
+        sentAt: DateTime(2026),
+        fileName: 'p.png',
+        status: status,
       );
 
   Future<void> pump(WidgetTester tester, HuddleController c) {
@@ -129,6 +145,33 @@ void main() {
 
     expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
     expect(find.byType(Image), findsNothing); // no synchronous file probe
+  });
+
+  testWidgets('an outgoing photo shows its delivery status', (tester) async {
+    final c = _FakeChatController([minePhoto(MessageStatus.delivered)]);
+    addTearDown(c.dispose);
+
+    await pump(tester, c);
+    await tester.pump();
+
+    // The status tick now renders for photos, not only text (finding #21).
+    expect(find.byIcon(Icons.done_all), findsOneWidget);
+  });
+
+  testWidgets('a failed outgoing photo can be retried from its status tick',
+      (tester) async {
+    final c = _FakeChatController([minePhoto(MessageStatus.failed)]);
+    addTearDown(c.dispose);
+
+    await pump(tester, c);
+    await tester.pump();
+
+    final tick = find.byIcon(Icons.error_outline);
+    expect(tick, findsOneWidget);
+
+    await tester.tap(tick);
+    await tester.pump();
+    expect(c.retryCalls, 1); // tapping it retries the photo
   });
 }
 
