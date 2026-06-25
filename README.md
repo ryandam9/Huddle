@@ -39,7 +39,7 @@ Huddle is fully decentralised — there is no server.
 | **Transport**  | TCP with newline-delimited JSON frames. Each message opens a short-lived connection, making the protocol stateless and robust. |
 | **Agreement**  | A three-step, code-verified handshake: the initiator shows a one-time 6-digit code, the other device's user types it in (`pair_response`), and the initiator confirms only on a match (`pair_confirm`). Both sides then persist each other as a paired *peer*. |
 | **Sharing**    | `text` and `photo` (base64) frames flow only between paired peers. Received photos are written to the app's documents directory. |
-| **Persistence**| Identity, paired peers and conversations are stored via `shared_preferences`; photos on disk via `path_provider`. |
+| **Persistence**| Identity, paired peers and settings live in `shared_preferences`; conversation history is a local database (one record per message, with per-message status updates); received photos are written to disk via `path_provider`. |
 
 The wire protocol lives in [`lib/services/protocol.dart`](lib/services/protocol.dart).
 
@@ -58,7 +58,8 @@ lib/
     identity.dart               This device's persistent id + display name
     discovery_service.dart      UDP broadcast presence (beacons)
     transport_service.dart      TCP server + one-shot frame sender
-    storage_service.dart        Persistence for peers, history and media
+    storage_service.dart        Persistence for peers, settings and media
+    message_store.dart          Conversation-history database (one row per message)
   state/
     huddle_controller.dart      ChangeNotifier orchestrating everything
   screens/
