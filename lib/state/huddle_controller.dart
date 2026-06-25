@@ -154,6 +154,13 @@ class HuddleController extends ChangeNotifier {
   @visibleForTesting
   int maxSendAttempts = 3;
 
+  /// Messages currently being delivered (by mid), so a resume pass never
+  /// double-sends something that's already in flight.
+  final Set<String> _inFlight = {};
+
+  /// Guards the background resume drain so only one runs per turn.
+  bool _flushing = false;
+
   /// Set by the UI to prompt the user when another device requests pairing.
   /// Should return the code the user typed in, or null if they declined.
   Future<String?> Function(Endpoint from)? onPairRequest;
@@ -407,6 +414,9 @@ class HuddleController extends ChangeNotifier {
         ..lastSeen = DateTime.now();
     }
     notifyListeners();
+    // The peer is reachable now — flush anything queued for it (including
+    // transfers interrupted by an app restart).
+    _flushPending(endpoint.id);
   }
 
   void _pruneDevices() {
@@ -495,42 +505,30 @@ class HuddleController extends ChangeNotifier {
   /// acknowledgement + retry — its status advances to `delivered` once the peer
   /// confirms receipt, or `failed` if it can't be reached. Returns true if the
   /// message was accepted (paired and non-empty).
+  /// Sends a text message. It's stored and shown immediately (optimistically)
+  /// with a `sending` status, then delivered in the background with
+  /// acknowledgement + retry. While the peer is unreachable the message stays
+  /// queued (`sending`) and is delivered automatically once the peer is seen
+  /// again — even across an app restart. Returns true if accepted (paired and
+  /// non-empty).
   Future<bool> sendText(String peerId, String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty || !isPaired(peerId)) return false;
 
-    final mid = _uuid.v4();
-    final now = DateTime.now();
     _appendMessage(
       peerId,
       ChatMessage(
-        id: mid,
+        id: _uuid.v4(),
         peerId: peerId,
         mine: true,
         kind: MessageKind.text,
-        sentAt: now,
+        sentAt: DateTime.now(),
         text: trimmed,
         status: MessageStatus.sending,
       ),
     );
-
-    // Deliver in the background so the composer stays responsive; the bubble's
-    // status reflects the outcome.
-    unawaited(_deliverTextReliably(peerId, mid, trimmed, now));
+    _flushPending(peerId); // deliver now if reachable, else it stays queued
     return true;
-  }
-
-  Future<void> _deliverTextReliably(
-      String peerId, String mid, String text, DateTime sentAt) async {
-    final device = _devices[peerId];
-    final delivered = device != null &&
-        await _sendReliably(device.host, device.port, FrameType.text, {
-          'mid': mid,
-          'text': text,
-          'ts': sentAt.millisecondsSinceEpoch,
-        }, mid);
-    _setMessageStatus(peerId, mid,
-        delivered ? MessageStatus.delivered : MessageStatus.failed);
   }
 
   /// Advances the delivery [status] of message [mid] in [peerId]'s conversation
@@ -550,54 +548,122 @@ class HuddleController extends ChangeNotifier {
     }
   }
 
-  /// Sends a single photo. Interactive (fire-once): the local copy is stored
-  /// and shown immediately, and the return value reflects whether the frame
-  /// was flushed to the peer.
-  Future<bool> sendPhoto(String peerId, String sourcePath) =>
-      _deliverPhoto(peerId, sourcePath, reliable: false);
+  /// Re-delivers any of [peerId]'s own messages still `sending` — freshly
+  /// queued, or left over from a transfer interrupted (even by an app restart)
+  /// — one at a time. Skipped while an active batch is driving delivery itself,
+  /// and serialised so a burst of beacons can't spawn parallel drains.
+  void _flushPending(String peerId) {
+    final t = _transfer;
+    if (t != null && t.peerId == peerId && !t.isComplete) return; // batch owns it
+    if (_flushing) return;
+    unawaited(_drainPending(peerId));
+  }
 
-  /// Shared photo-send path. When [reliable] is true the frame is retried until
-  /// the peer acknowledges it (used by batch sends); otherwise it's sent once.
-  Future<bool> _deliverPhoto(String peerId, String sourcePath,
-      {required bool reliable}) async {
+  Future<void> _drainPending(String peerId) async {
+    _flushing = true;
+    try {
+      while (true) {
+        final next = _nextPending(peerId);
+        if (next == null) break;
+        final result = await _deliverStored(peerId, next);
+        if (result == null) break; // peer unreachable now — retry on its return
+      }
+    } finally {
+      _flushing = false;
+    }
+  }
+
+  ChatMessage? _nextPending(String peerId) {
+    for (final m in _conversations[peerId] ?? const <ChatMessage>[]) {
+      if (m.mine &&
+          m.status == MessageStatus.sending &&
+          !_inFlight.contains(m.id)) {
+        return m;
+      }
+    }
+    return null;
+  }
+
+  /// Sends a single photo. Stores it (shown immediately), then delivers
+  /// reliably; returns true once the peer acknowledges receipt.
+  Future<bool> sendPhoto(String peerId, String sourcePath) async {
     if (!isPaired(peerId)) return false;
+    final message = await _enqueuePhoto(peerId, sourcePath);
+    if (message == null) return false;
+    return (await _deliverStored(peerId, message)) ?? false;
+  }
 
+  /// Reads [sourcePath], keeps a durable local copy (so the bubble renders and
+  /// the send can be resumed later) and appends a `sending` photo message.
+  /// Returns the stored message, or null if the source can't be read.
+  Future<ChatMessage?> _enqueuePhoto(String peerId, String sourcePath) async {
     final file = File(sourcePath);
-    if (!await file.exists()) return false;
+    if (!await file.exists()) return null;
     final bytes = await file.readAsBytes();
     final name = sourcePath.split(Platform.pathSeparator).last;
-    final mime = _mimeForName(name);
-
-    // Keep a durable local copy so the bubble still renders later.
     final storedPath = await _storage.saveIncomingPhoto(name, bytes);
-
-    final mid = _uuid.v4();
-    final now = DateTime.now();
-    _appendMessage(
-      peerId,
-      ChatMessage(
-        id: mid,
-        peerId: peerId,
-        mine: true,
-        kind: MessageKind.photo,
-        sentAt: now,
-        filePath: storedPath,
-        fileName: name,
-      ),
+    final message = ChatMessage(
+      id: _uuid.v4(),
+      peerId: peerId,
+      mine: true,
+      kind: MessageKind.photo,
+      sentAt: DateTime.now(),
+      filePath: storedPath,
+      fileName: name,
+      status: MessageStatus.sending,
     );
+    _appendMessage(peerId, message);
+    return message;
+  }
 
+  /// Delivers a stored outgoing [message] reliably and records the outcome on
+  /// it. Returns true if delivered (acknowledged), false if it failed (the peer
+  /// was reachable but didn't confirm, or the file is gone), or null if it
+  /// couldn't be attempted now (peer unreachable, or already in flight) — in
+  /// which case it stays `sending` and is retried when the peer reappears.
+  Future<bool?> _deliverStored(String peerId, ChatMessage message) async {
+    if (message.status == MessageStatus.delivered) return true;
+    if (_inFlight.contains(message.id)) return null;
     final device = _devices[peerId];
-    if (device == null) return false;
-    final data = <String, dynamic>{
-      'mid': mid,
-      'name': name,
-      'mime': mime,
-      'data': base64Encode(bytes),
-      'ts': now.millisecondsSinceEpoch,
-    };
-    return reliable
-        ? _sendReliably(device.host, device.port, FrameType.photo, data, mid)
-        : _send(device.host, device.port, FrameType.photo, data);
+    if (device == null) return null;
+
+    _inFlight.add(message.id);
+    try {
+      final data = await _frameFor(message);
+      if (data == null) {
+        _setMessageStatus(peerId, message.id, MessageStatus.failed);
+        return false;
+      }
+      final type =
+          message.kind == MessageKind.photo ? FrameType.photo : FrameType.text;
+      final ok =
+          await _sendReliably(device.host, device.port, type, data, message.id);
+      _setMessageStatus(peerId, message.id,
+          ok ? MessageStatus.delivered : MessageStatus.failed);
+      return ok;
+    } finally {
+      _inFlight.remove(message.id);
+    }
+  }
+
+  /// Builds the wire payload for [message], or null if its file has gone.
+  Future<Map<String, dynamic>?> _frameFor(ChatMessage message) async {
+    final ts = message.sentAt.millisecondsSinceEpoch;
+    if (message.kind == MessageKind.photo) {
+      final path = message.filePath;
+      if (path == null) return null;
+      final file = File(path);
+      if (!await file.exists()) return null;
+      final name = message.fileName ?? 'photo';
+      return {
+        'mid': message.id,
+        'name': name,
+        'mime': _mimeForName(name),
+        'data': base64Encode(await file.readAsBytes()),
+        'ts': ts,
+      };
+    }
+    return {'mid': message.id, 'text': message.text ?? '', 'ts': ts};
   }
 
   /// Sends every photo in [paths] to [peerId], one after another, in the
@@ -614,14 +680,28 @@ class HuddleController extends ChangeNotifier {
     final items = paths.where((p) => p.trim().isNotEmpty).toList();
     if (items.isEmpty) return;
 
-    _transfer = TransferProgress(peerId: peerId, total: items.length);
+    // Persist the whole batch upfront (as `sending` messages with durable local
+    // copies) so an interruption leaves the remainder queued to resume later.
+    final pending = <ChatMessage>[];
+    for (final path in items) {
+      final message = await _enqueuePhoto(peerId, path);
+      if (message != null) pending.add(message);
+    }
+    if (pending.isEmpty) return;
+
+    _transfer = TransferProgress(peerId: peerId, total: pending.length);
     notifyListeners();
 
-    for (final path in items) {
-      // Reliable: each file is retried until the peer acknowledges it, so a
-      // background batch doesn't silently drop files.
-      final ok = await _deliverPhoto(peerId, path, reliable: true);
-      _transfer = _transfer!._advance(ok: ok);
+    for (final message in pending) {
+      final result = await _deliverStored(peerId, message);
+      if (result == null) {
+        // Peer became unreachable — the rest stay queued and resume on its next
+        // appearance. Stop showing active progress.
+        _transfer = null;
+        notifyListeners();
+        return;
+      }
+      _transfer = _transfer!._advance(ok: result);
       notifyListeners();
     }
   }
