@@ -42,15 +42,35 @@ class ChatScreen extends StatelessWidget {
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: 'End huddle',
-            icon: const Icon(Icons.link_off),
-            onPressed: () async {
+          PopupMenuButton<String>(
+            tooltip: 'Conversation options',
+            onSelected: (value) async {
               final navigator = Navigator.of(context);
-              if (await confirmEndHuddle(context, controller, peer)) {
+              if (value == 'clear') {
+                await confirmClearConversation(context, controller, peer);
+              } else if (value == 'end' &&
+                  await confirmEndHuddle(context, controller, peer)) {
                 navigator.pop();
               }
             },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'clear',
+                child: ListTile(
+                  leading: Icon(Icons.delete_sweep_outlined),
+                  title: Text('Clear messages'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'end',
+                child: ListTile(
+                  leading: Icon(Icons.link_off),
+                  title: Text('End huddle'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
           const SizedBox(width: 4),
         ],
@@ -151,6 +171,29 @@ class _ChatViewState extends State<ChatView> {
     unawaited(controller.sendPhotos(widget.peer.id, paths));
   }
 
+  /// Long-press on a bubble: confirm and delete the message locally.
+  Future<void> _confirmDeleteMessage(
+      HuddleController controller, ChatMessage message) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete message?'),
+        content: const Text('This removes it from this device only.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await controller.deleteMessage(widget.peer.id, message.id);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<HuddleController>();
@@ -185,11 +228,16 @@ class _ChatViewState extends State<ChatView> {
                       itemCount: messages.length,
                       itemBuilder: (_, i) {
                         final m = messages[i];
-                        return _Bubble(
-                          message: m,
-                          onRetry: (m.mine && m.status == MessageStatus.failed)
-                              ? () => controller.retryMessage(widget.peer.id, m.id)
-                              : null,
+                        return GestureDetector(
+                          onLongPress: () => _confirmDeleteMessage(controller, m),
+                          child: _Bubble(
+                            message: m,
+                            onRetry:
+                                (m.mine && m.status == MessageStatus.failed)
+                                    ? () => controller.retryMessage(
+                                        widget.peer.id, m.id)
+                                    : null,
+                          ),
                         );
                       },
                     ),
@@ -236,6 +284,35 @@ Future<bool> confirmEndHuddle(
     return true;
   }
   return false;
+}
+
+/// Confirm dialog + clear the conversation history (the agreement is kept).
+Future<void> confirmClearConversation(
+    BuildContext context, HuddleController controller, Peer peer) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Clear messages?'),
+      content: Text(
+        'This deletes the conversation with ${peer.name} on this device. '
+        'Your agreement stays, so you can keep chatting.',
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel')),
+        FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Clear')),
+      ],
+    ),
+  );
+  if (ok == true) {
+    await controller.clearConversation(peer.id);
+    messenger.showSnackBar(
+        const SnackBar(content: Text('Conversation cleared.')));
+  }
 }
 
 class _Bubble extends StatelessWidget {
