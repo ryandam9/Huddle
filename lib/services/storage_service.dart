@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../models/chat_message.dart';
 import '../models/peer.dart';
@@ -134,7 +135,10 @@ class StorageService {
   Future<String> saveIncomingPhoto(String fileName, List<int> bytes) async {
     final safe = fileName.replaceAll(RegExp(r'[^\w\-. ]'), '_');
     final stamp = DateTime.now().millisecondsSinceEpoch;
-    final leaf = '${stamp}_$safe';
+    // A short unique segment avoids collisions when two files share a name and
+    // land in the same millisecond (e.g. a fast batch).
+    final unique = const Uuid().v4().substring(0, 8);
+    final leaf = '${stamp}_${unique}_$safe';
     try {
       final dir = await _mediaDir();
       return _writeBytes('${dir.path}/$leaf', bytes);

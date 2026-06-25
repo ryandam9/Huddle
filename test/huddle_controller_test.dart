@@ -196,6 +196,17 @@ void main() {
       final c = await start();
       expect(c.refreshDiscovery, returnsNormally);
     });
+
+    test('an out-of-range discovery port is rejected and rolled back',
+        () async {
+      final c = await start();
+      await c.setDiscoveryPort(70000); // > 65535 → bind fails → roll back
+      expect(c.discoveryPort, kDiscoveryPort); // unchanged
+
+      // The bad port was never persisted.
+      final reloaded = await start();
+      expect(reloaded.discoveryPort, kDiscoveryPort);
+    });
   });
 
   group('download settings', () {

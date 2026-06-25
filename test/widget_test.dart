@@ -25,6 +25,11 @@ void main() {
       expect(formatRelative(DateTime.now()), 'just now');
     });
 
+    test('a future timestamp (clock skew) reads as "just now"', () {
+      expect(formatRelative(DateTime.now().add(const Duration(minutes: 5))),
+          'just now');
+    });
+
     test('minutes, hours and days are summarised', () {
       final now = DateTime.now();
       expect(formatRelative(now.subtract(const Duration(minutes: 5))), '5m ago');

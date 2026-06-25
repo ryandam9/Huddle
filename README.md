@@ -16,6 +16,19 @@ no internet required. Everything happens peer-to-peer over your Wi-Fi/LAN.
    **photos** in a familiar chat interface. Conversation history is stored
    locally on each device.
 
+Sharing extras:
+
+- **Batch & folder sending** — pick many photos at once, or (on desktop) a
+  whole folder; they send sequentially in the background with a progress strip.
+- **Reliable delivery** — each message is acknowledged and retried; outgoing
+  bubbles show *sending → delivered → read*, with tap-to-retry on failure.
+- **Resumable queue** — a message to an offline peer is queued and delivered
+  automatically when the peer reappears, even across an app restart.
+- **Background transfers (Android)** — a foreground service keeps a batch going
+  while the app is backgrounded.
+- **Conversation management** — clear a conversation, delete a message, and
+  choose a custom download folder for received files.
+
 ## How it works
 
 Huddle is fully decentralised — there is no server.
@@ -49,11 +62,13 @@ lib/
   state/
     huddle_controller.dart      ChangeNotifier orchestrating everything
   screens/
-    home_screen.dart            Bottom-nav shell + pairing prompt
+    home_screen.dart            Bottom-nav / rail shell + pairing prompts
     dashboard_screen.dart       Devices on the network
-    huddles_screen.dart         List of paired conversations
+    messages_screen.dart        List of paired conversations
     chat_screen.dart            A one-to-one conversation
-    settings_screen.dart        Identity, network info, agreements
+    settings_screen.dart        Identity, downloads, agreements
+    network_settings_screen.dart  Ports, broadcast address, diagnostics
+    help_screen.dart            Troubleshooting
 ```
 
 ## Running
@@ -81,7 +96,13 @@ other's **Devices** tab; pair from one, accept on the other, then chat.
 
 ## Limitations
 
+- **Security** — traffic is **not encrypted**, and frames are trusted by paired
+  peer id (there is no shared-secret authentication or replay protection yet).
+  Treat Huddle as suitable for networks you trust; anyone able to capture LAN
+  packets could read message/photo content. Inbound frames are size-capped and
+  acknowledgements are checked against the sending peer, but end-to-end
+  encryption and signed frames are not yet implemented.
 - Photos are sent inline as base64, which is fine for typical images but not
-  intended for very large files.
+  intended for very large files (a chunked transfer is planned).
 - Discovery relies on UDP broadcast; networks that isolate clients (guest
   Wi-Fi, "AP isolation") will prevent devices from seeing each other.
