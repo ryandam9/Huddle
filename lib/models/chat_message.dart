@@ -3,8 +3,9 @@ enum MessageKind { text, photo, system }
 
 /// Delivery state of an outgoing message. Incoming and historical messages are
 /// always [delivered]; only our own freshly-sent ones pass through [sending]
-/// on the way to [delivered] (acknowledged by the peer) or [failed].
-enum MessageStatus { sending, delivered, failed }
+/// on the way to [delivered] (acknowledged by the peer) and then [read] (the
+/// peer opened the conversation), or [failed] if it couldn't be delivered.
+enum MessageStatus { sending, delivered, read, failed }
 
 /// A single entry in a conversation with a peer.
 ///

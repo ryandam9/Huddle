@@ -114,6 +114,10 @@ class HuddleController extends ChangeNotifier {
   /// Unread message counts keyed by peer id.
   final Map<String, int> _unread = {};
 
+  /// Mids received from each peer that haven't yet been reported as read; sent
+  /// in a `read` receipt when the conversation is opened (markRead).
+  final Map<String, List<String>> _unackedReceived = {};
+
   String? wifiIp;
   bool ready = false;
 
@@ -741,8 +745,43 @@ class HuddleController extends ChangeNotifier {
   }
 
   void markRead(String peerId) {
+    _sendReadReceipt(peerId);
     if ((_unread[peerId] ?? 0) != 0) {
       _unread[peerId] = 0;
+      notifyListeners();
+    }
+  }
+
+  /// Tells [peerId] which of its messages we've now read, so it can show read
+  /// receipts. Best-effort: if the peer is unreachable the ids are kept and
+  /// retried the next time the conversation is marked read.
+  void _sendReadReceipt(String peerId) {
+    final mids = _unackedReceived[peerId];
+    if (mids == null || mids.isEmpty) return;
+    final device = _devices[peerId];
+    if (device == null) return; // offline — keep the ids for next time
+    _send(device.host, device.port, FrameType.read, {'mids': List.of(mids)});
+    _unackedReceived.remove(peerId);
+  }
+
+  /// A peer reported reading our messages — upgrade their delivery status to
+  /// `read`. A receipt is the strongest confirmation of receipt, so it's
+  /// accepted regardless of what we currently believe.
+  void _onRead(IncomingFrame frame) {
+    final mids = (frame.data['mids'] as List?)?.cast<String>();
+    if (mids == null || mids.isEmpty) return;
+    final list = _conversations[frame.from.id];
+    if (list == null) return;
+    final readMids = mids.toSet();
+    var changed = false;
+    for (final m in list) {
+      if (m.mine && m.status != MessageStatus.read && readMids.contains(m.id)) {
+        m.status = MessageStatus.read;
+        changed = true;
+      }
+    }
+    if (changed) {
+      _storage.saveMessages(frame.from.id, list);
       notifyListeners();
     }
   }
@@ -774,6 +813,9 @@ class HuddleController extends ChangeNotifier {
         break;
       case FrameType.ack:
         _onAck(frame);
+        break;
+      case FrameType.read:
+        _onRead(frame);
         break;
     }
   }
@@ -875,6 +917,7 @@ class HuddleController extends ChangeNotifier {
       ),
       bumpUnread: true,
     );
+    _recordReceived(frame.from.id, mid);
     _ackTo(frame.from, mid); // confirm receipt for the reliable sender
     _tick(); // felt a new message arrive
     _notifyReceived('New message from ${frame.from.name}');
@@ -914,9 +957,15 @@ class HuddleController extends ChangeNotifier {
       ),
       bumpUnread: true,
     );
+    _recordReceived(frame.from.id, mid);
     _ackTo(frame.from, mid); // confirm receipt for reliable senders
     _tick(); // felt a new photo arrive
     _notifyPhotoReceived(frame.from.name);
+  }
+
+  /// Notes that [mid] was received from [peerId] but not yet reported as read.
+  void _recordReceived(String peerId, String mid) {
+    (_unackedReceived[peerId] ??= <String>[]).add(mid);
   }
 
   /// Raises a transient in-app notice for received content, when the user has

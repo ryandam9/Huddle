@@ -68,7 +68,7 @@ void main() {
       jsonEncode({'mid': mid, 'name': '$mid.png', 'data': base64Encode(_tinyPng)});
 
   test('the protocol version is bumped and the ack frame is defined', () {
-    expect(kProtocolVersion, 3);
+    expect(kProtocolVersion, greaterThanOrEqualTo(3)); // ack landed in v3
     expect(FrameType.ack, 'ack');
   });
 

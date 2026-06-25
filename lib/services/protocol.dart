@@ -16,7 +16,8 @@ const String kAppTag = 'huddle';
 /// on `pair_response`).
 /// v3 added the `ack` frame so a sender can confirm delivery and retry — older
 /// peers simply ignore unknown frames, so this stays backward tolerant.
-const int kProtocolVersion = 3;
+/// v4 added the `read` frame (read receipts) — likewise ignored by older peers.
+const int kProtocolVersion = 4;
 
 /// UDP port used for presence beacons. Fixed so every device listens on the
 /// same port.
@@ -49,6 +50,10 @@ class FrameType {
   /// Sent back by the receiver to confirm it stored a frame (carries the
   /// original `mid`), so a reliable sender knows to stop retrying.
   static const String ack = 'ack';
+
+  /// Sent when a peer opens a conversation, carrying the `mids` of messages it
+  /// has now read, so the sender can show read receipts.
+  static const String read = 'read';
 }
 
 /// Identifies the sender of a frame and how to reach it for a reply.
