@@ -2,7 +2,10 @@
 // (peers and conversation history). The photo-on-disk path uses path_provider
 // and is exercised by integration testing rather than here.
 
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:huddle/models/chat_message.dart';
@@ -120,4 +123,59 @@ void main() {
       expect(storage.loadCustomBroadcast(), isNull);
     });
   });
+
+  group('media', () {
+    late Directory tmp;
+
+    setUp(() => tmp = Directory.systemTemp.createTempSync('huddle_media_test'));
+    tearDown(() {
+      if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+      PathProviderPlatform.instance = _UnsetPathProvider();
+    });
+
+    test('saves an incoming file into the chosen custom folder', () async {
+      final dest = Directory('${tmp.path}/downloads');
+      SharedPreferences.setMockInitialValues({'huddle.media.dir': dest.path});
+      final store = StorageService(await SharedPreferences.getInstance());
+
+      final path = await store.saveIncomingPhoto('pic.jpg', [1, 2, 3]);
+
+      expect(path, startsWith(dest.path));
+      expect(File(path).readAsBytesSync(), [1, 2, 3]);
+    });
+
+    test('falls back to the default folder when the custom one is unwritable',
+        () async {
+      // A file where a directory is expected makes the custom folder impossible
+      // to create — standing in for a moved folder or an expired sandbox grant.
+      final blocker = File('${tmp.path}/blocker')..writeAsStringSync('x');
+      final fallback = Directory('${tmp.path}/container');
+      PathProviderPlatform.instance = _FakePathProvider(fallback.path);
+
+      SharedPreferences.setMockInitialValues(
+          {'huddle.media.dir': '${blocker.path}/nope'});
+      final store = StorageService(await SharedPreferences.getInstance());
+
+      final path = await store.saveIncomingPhoto('pic.jpg', [4, 5, 6]);
+
+      expect(path, startsWith('${fallback.path}/huddle_media'));
+      expect(File(path).readAsBytesSync(), [4, 5, 6]);
+    });
+  });
+}
+
+/// Returns a fixed documents path so the default download folder is
+/// deterministic in tests (path_provider has no real platform here).
+class _FakePathProvider extends PathProviderPlatform {
+  _FakePathProvider(this.documentsPath);
+  final String documentsPath;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => documentsPath;
+}
+
+/// Restores a no-op provider between tests so a stale fake can't leak.
+class _UnsetPathProvider extends PathProviderPlatform {
+  @override
+  Future<String?> getApplicationDocumentsPath() async => null;
 }
