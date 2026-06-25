@@ -78,7 +78,7 @@ void main() {
   }
 
   group('text frames', () {
-    test('text from an unpaired sender is ignored (but the device is seen)',
+    test('text from an unpaired sender is ignored and adds no device',
         () async {
       final c = await startController(); // no peers
       final stranger = await peer('stranger', 'Nope');
@@ -86,11 +86,13 @@ void main() {
       await stranger
           .send('127.0.0.1', c.tcpPort, FrameType.text, {'mid': 'm1', 'text': 'hi'});
 
-      // Once the device shows up the frame has been processed end to end…
-      await _waitFor(() => c.deviceFor('stranger') != null);
-      // …yet without an agreement nothing was stored.
+      // Give the frame time to arrive and be rejected, then assert nothing
+      // happened: without an agreement it isn't stored, and an unpaired device
+      // can't put itself on the dashboard by sending a frame (finding #15).
+      await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(c.conversation('stranger'), isEmpty);
       expect(c.unreadFor('stranger'), 0);
+      expect(c.deviceFor('stranger'), isNull);
     });
 
     test('text from a paired peer is stored, not-mine, and bumps unread',
@@ -226,8 +228,9 @@ void main() {
 
       await stranger.send('127.0.0.1', c.tcpPort, FrameType.unpair, const {});
 
-      await _waitFor(() => c.deviceFor('stranger') != null); // frame processed
-      expect(c.isPaired('p1'), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(c.isPaired('p1'), isTrue); // a stranger can't end our agreement
+      expect(c.deviceFor('stranger'), isNull); // nor surface via a frame
     });
   });
 
@@ -244,6 +247,25 @@ void main() {
       expect(dev.port, p1.port); // learned the sender's transport port
       expect(dev.host, anyOf('127.0.0.1', '::1'));
       expect(c.isOnline('p1'), isTrue);
+    });
+
+    test('an unpaired device is surfaced by discovery, not by its frames',
+        () async {
+      final c = await startController(); // no peers
+      final stranger = await peer('stranger', 'Nope');
+
+      // A content frame from an unpaired device must not enter the device table.
+      await stranger.send('127.0.0.1', c.tcpPort, FrameType.photo,
+          {'mid': 'p', 'name': 'x.png', 'data': base64Encode(_tinyPng)});
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(c.deviceFor('stranger'), isNull);
+
+      // …but a discovery beacon does surface it on the dashboard.
+      c.ingestBeacon(
+          '127.0.0.1',
+          Endpoint(
+              id: 'stranger', name: 'Nope', platform: 'android', port: 5000));
+      expect(c.deviceFor('stranger'), isNotNull);
     });
 
     test('markRead clears the unread counter for a peer', () async {

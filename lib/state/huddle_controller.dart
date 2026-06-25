@@ -915,8 +915,15 @@ class HuddleController extends ChangeNotifier {
   // --- Inbound frames ------------------------------------------------------
 
   Future<void> _handleFrame(IncomingFrame frame) async {
-    // Any contact refreshes our knowledge of where the peer lives.
-    _upsertDevice(frame.from.host, frame.from);
+    // Trust before bookkeeping: only a peer we already have an agreement with
+    // may refresh its device-table entry from a frame. An unpaired device has
+    // to announce itself through discovery (a beacon) to appear on the
+    // dashboard — it can't inject or redirect a device entry just by sending a
+    // frame (finding #15). The pairing handlers learn the peer's address
+    // themselves once the code is verified.
+    if (isPaired(frame.from.id)) {
+      _upsertDevice(frame.from.host, frame.from);
+    }
 
     switch (frame.type) {
       case FrameType.pairRequest:
@@ -990,6 +997,8 @@ class HuddleController extends ChangeNotifier {
     if (pairingCodeMatches(expected, code)) {
       _addPeer(frame.from,
           system: 'You are now connected with ${frame.from.name}.');
+      // Verified pairing → trust this endpoint so we can reach them at once.
+      _upsertDevice(frame.from.host, frame.from);
       _send(frame.from.host, frame.from.port, FrameType.pairConfirm,
           {'accepted': true});
       if (isActive) pending.status = PairStatus.success;
@@ -1009,6 +1018,8 @@ class HuddleController extends ChangeNotifier {
     if (accepted) {
       _addPeer(frame.from,
           system: 'You are now connected with ${frame.from.name}.');
+      // Verified pairing → trust this endpoint so we can reach them at once.
+      _upsertDevice(frame.from.host, frame.from);
       onNotice?.call('Paired with ${frame.from.name}.');
       _buzz(); // celebrate a successful pairing
     } else {
