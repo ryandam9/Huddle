@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import 'identity.dart';
 import 'protocol.dart';
 
@@ -40,6 +42,20 @@ class DiscoveryService {
   RawDatagramSocket? _socket;
   Timer? _timer;
 
+  // Cached per-interface subnet broadcasts. Enumerating network interfaces is
+  // comparatively expensive and the result rarely changes, so it's held for a
+  // short TTL rather than recomputed on every beacon (finding #17). The limited
+  // and custom broadcasts are cheap and always added fresh, so a custom-address
+  // change still takes effect immediately.
+  List<String>? _cachedSubnets;
+  DateTime? _subnetsCachedAt;
+  static const Duration _subnetCacheTtl = Duration(seconds: 45);
+
+  /// How many times the network interfaces were actually enumerated (a cache
+  /// miss). Exposed so tests can assert the caching behaviour.
+  @visibleForTesting
+  int interfaceLookups = 0;
+
   Future<void> start() async {
     final socket = await RawDatagramSocket.bind(
       InternetAddress.anyIPv4,
@@ -59,6 +75,9 @@ class DiscoveryService {
   /// Sends an on-demand probe so other devices announce themselves now, and
   /// announces ourselves too.
   void refresh() {
+    // A manual refresh re-enumerates interfaces in case the network changed.
+    _cachedSubnets = null;
+    _subnetsCachedAt = null;
     _broadcast(type: kProbeType);
     _broadcast(type: kBeaconType);
   }
@@ -118,8 +137,9 @@ class DiscoveryService {
   }
 
   /// The addresses beacons are sent to: the limited broadcast, each active
-  /// IPv4 interface's subnet broadcast (assuming a /24), and the optional
-  /// user-supplied custom address.
+  /// IPv4 interface's subnet broadcast, and the optional user-supplied custom
+  /// address. The interface-derived part is cached (see [_subnetBroadcasts]);
+  /// the limited and custom addresses are always recomputed fresh.
   Future<List<InternetAddress>> broadcastTargets() async {
     final targets = <String>{'255.255.255.255'};
 
@@ -128,6 +148,28 @@ class DiscoveryService {
       targets.add(custom);
     }
 
+    targets.addAll(await _subnetBroadcasts());
+
+    return targets
+        .map(InternetAddress.tryParse)
+        .whereType<InternetAddress>()
+        .toList();
+  }
+
+  /// Each active IPv4 interface's subnet-directed broadcast (assuming a /24),
+  /// cached for [_subnetCacheTtl] so the periodic beacon doesn't re-enumerate
+  /// the interfaces every few seconds.
+  Future<List<String>> _subnetBroadcasts() async {
+    final cached = _cachedSubnets;
+    final cachedAt = _subnetsCachedAt;
+    if (cached != null &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < _subnetCacheTtl) {
+      return cached;
+    }
+
+    interfaceLookups++;
+    final subnets = <String>[];
     try {
       final interfaces = await NetworkInterface.list(
         type: InternetAddressType.IPv4,
@@ -138,18 +180,17 @@ class DiscoveryService {
         for (final addr in iface.addresses) {
           final parts = addr.address.split('.');
           if (parts.length == 4) {
-            targets.add('${parts[0]}.${parts[1]}.${parts[2]}.255');
+            subnets.add('${parts[0]}.${parts[1]}.${parts[2]}.255');
           }
         }
       }
     } catch (_) {
-      // Fall back to whatever we have.
+      // Fall back to whatever we have (just the limited/custom broadcasts).
     }
 
-    return targets
-        .map(InternetAddress.tryParse)
-        .whereType<InternetAddress>()
-        .toList();
+    _cachedSubnets = subnets;
+    _subnetsCachedAt = DateTime.now();
+    return subnets;
   }
 
   /// reusePort is unsupported on Windows; enabling it there throws.

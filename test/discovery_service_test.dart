@@ -63,4 +63,28 @@ void main() {
     expect((await d.broadcastTargets()).map((a) => a.address),
         contains('10.9.9.255'));
   });
+
+  test('interface enumeration is cached between beacons; refresh re-runs it',
+      () async {
+    final d = DiscoveryService(identity: id(), tcpPort: 1234);
+
+    await d.broadcastTargets();
+    await d.broadcastTargets();
+    expect(d.interfaceLookups, 1); // the second call is served from the cache
+
+    d.refresh(); // a manual refresh invalidates the cache
+    await d.broadcastTargets();
+    expect(d.interfaceLookups, 2);
+  });
+
+  test('a changed custom broadcast is reflected without re-enumerating',
+      () async {
+    final d = DiscoveryService(identity: id(), tcpPort: 1234);
+    await d.broadcastTargets(); // primes the subnet cache (1 lookup)
+
+    d.customBroadcast = '10.9.9.255';
+    final targets = (await d.broadcastTargets()).map((a) => a.address).toList();
+    expect(targets, contains('10.9.9.255')); // fresh custom address included…
+    expect(d.interfaceLookups, 1); // …with no extra interface enumeration
+  });
 }
