@@ -11,6 +11,7 @@ import 'package:huddle/models/peer.dart';
 import 'package:huddle/models/chat_message.dart';
 import 'package:huddle/services/identity.dart';
 import 'package:huddle/state/huddle_controller.dart';
+import 'package:huddle/screens/chat_screen.dart';
 import 'package:huddle/screens/dashboard_screen.dart';
 import 'package:huddle/screens/help_screen.dart';
 import 'package:huddle/screens/messages_screen.dart';
@@ -239,6 +240,30 @@ void main() {
       await tester.tap(find.text('How do I connect two devices?'));
       await tester.pumpAndSettle();
       expect(find.textContaining('A 6'), findsWidgets); // now revealed
+    });
+  });
+
+  group('ChatScreen options', () {
+    testWidgets('the options menu offers clear and end; clear asks first',
+        (tester) async {
+      final c = FakeController(peersList: [_peer('p1', 'Phone')]);
+      await pumpApp(tester, c, ChatScreen(peer: _peer('p1', 'Phone')));
+
+      await tester.tap(find.byType(PopupMenuButton<String>));
+      await tester.pumpAndSettle();
+      expect(find.text('Clear messages'), findsOneWidget);
+      expect(find.text('End huddle'), findsOneWidget);
+
+      // Choosing "Clear messages" asks for confirmation rather than acting.
+      await tester.tap(find.text('Clear messages'));
+      await tester.pumpAndSettle();
+      expect(find.text('Clear messages?'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.text('Clear messages?'), findsNothing);
+
+      c.dispose();
     });
   });
 }

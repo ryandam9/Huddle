@@ -739,9 +739,33 @@ class HuddleController extends ChangeNotifier {
     _peers.remove(peerId);
     _conversations.remove(peerId);
     _unread.remove(peerId);
+    _unackedReceived.remove(peerId);
     await _storage.savePeers(_peers.values.toList());
     await _storage.deleteConversation(peerId);
     notifyListeners();
+  }
+
+  /// Clears the message history with [peerId] while keeping the agreement
+  /// (unlike [unpair], which removes the peer entirely).
+  Future<void> clearConversation(String peerId) async {
+    _conversations[peerId] = [];
+    _unread.remove(peerId);
+    _unackedReceived.remove(peerId);
+    await _storage.deleteConversation(peerId);
+    notifyListeners();
+  }
+
+  /// Deletes a single message from [peerId]'s conversation. Returns true if a
+  /// message was removed.
+  Future<bool> deleteMessage(String peerId, String mid) async {
+    final list = _conversations[peerId];
+    if (list == null) return false;
+    final before = list.length;
+    list.removeWhere((m) => m.id == mid);
+    if (list.length == before) return false;
+    await _storage.saveMessages(peerId, list);
+    notifyListeners();
+    return true;
   }
 
   void markRead(String peerId) {
