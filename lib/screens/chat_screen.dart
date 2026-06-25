@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_selector/file_selector.dart' show getDirectoryPath;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../models/chat_message.dart';
 import '../models/peer.dart';
+import '../responsive.dart';
+import '../services/media_scan.dart';
 import '../state/huddle_controller.dart';
 import '../ui_helpers.dart';
 import '../widgets/common.dart';
@@ -136,6 +139,21 @@ class _ChatViewState extends State<ChatView> {
     unawaited(controller.sendPhotos(widget.peer.id, paths));
   }
 
+  /// Desktop-only: pick a folder and send every image in it as one batch.
+  Future<void> _sendFolder(HuddleController controller) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final dir = await getDirectoryPath();
+    if (dir == null) return; // cancelled
+    final paths = await listImageFiles(dir);
+    if (paths.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('No photos found in that folder.')),
+      );
+      return;
+    }
+    unawaited(controller.sendPhotos(widget.peer.id, paths));
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<HuddleController>();
@@ -179,6 +197,8 @@ class _ChatViewState extends State<ChatView> {
           sending: sendingHere,
           onSend: () => _sendText(controller),
           onAttach: () => _sendPhotos(controller),
+          onAttachFolder:
+              isDesktopPlatform ? () => _sendFolder(controller) : null,
         ),
       ],
     );
@@ -362,12 +382,16 @@ class _Composer extends StatelessWidget {
     required this.sending,
     required this.onSend,
     required this.onAttach,
+    this.onAttachFolder,
   });
 
   final TextEditingController controller;
   final bool sending;
   final VoidCallback onSend;
   final VoidCallback onAttach;
+
+  /// Send-a-whole-folder action; null hides the button (mobile/web).
+  final VoidCallback? onAttachFolder;
 
   @override
   Widget build(BuildContext context) {
@@ -394,8 +418,20 @@ class _Composer extends StatelessWidget {
                         height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2))
                     : const Icon(Icons.add_photo_alternate_outlined),
-                tooltip: 'Send a photo',
+                tooltip: 'Send photos',
               ),
+              if (onAttachFolder != null) ...[
+                const SizedBox(width: 4),
+                IconButton(
+                  onPressed: sending ? null : onAttachFolder,
+                  style: IconButton.styleFrom(
+                    backgroundColor: scheme.surfaceContainerHigh,
+                    padding: const EdgeInsets.all(12),
+                  ),
+                  icon: const Icon(Icons.folder_outlined),
+                  tooltip: 'Send a folder of photos',
+                ),
+              ],
               const SizedBox(width: 8),
               Expanded(
                 child: TextField(

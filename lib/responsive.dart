@@ -1,4 +1,14 @@
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/widgets.dart';
+
+/// True on the desktop platforms, where native directory picking is available
+/// and folder-based workflows make sense (mobile gets multi-select instead).
+bool get isDesktopPlatform =>
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux);
 
 /// Layout breakpoints used to adapt the UI between phones, tablets and desktop.
 class Breakpoints {
