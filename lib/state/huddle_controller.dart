@@ -486,10 +486,28 @@ class HuddleController extends ChangeNotifier {
         ..platform = endpoint.platform
         ..lastSeen = DateTime.now();
     }
+    // Keep a paired peer's stored identity in step with what it now advertises,
+    // so the dashboard and the saved peer list don't disagree after the other
+    // device is renamed (finding #23).
+    _syncPeerIdentity(endpoint);
     notifyListeners();
     // The peer is reachable now — flush anything queued for it (including
     // transfers interrupted by an app restart).
     _flushPending(endpoint.id);
+  }
+
+  /// Updates a *paired* peer's persisted name/platform when it advertises a
+  /// change (e.g. the user renamed the other device). A no-op for unpaired
+  /// devices, which are never persisted as peers.
+  void _syncPeerIdentity(Endpoint endpoint) {
+    final peer = _peers[endpoint.id];
+    if (peer == null) return;
+    if (peer.name == endpoint.name && peer.platform == endpoint.platform) {
+      return;
+    }
+    peer.name = endpoint.name;
+    peer.platform = endpoint.platform;
+    unawaited(_storage.savePeers(_peers.values.toList()));
   }
 
   void _pruneDevices() {
