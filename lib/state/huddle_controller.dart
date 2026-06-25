@@ -548,6 +548,26 @@ class HuddleController extends ChangeNotifier {
     }
   }
 
+  /// Re-attempts a previously `failed` outgoing message: resets it to `sending`
+  /// and re-runs the queue (delivering now if the peer is reachable, otherwise
+  /// staying queued). Returns true if a retry was started — i.e. the message
+  /// exists, is ours, and had failed; false otherwise.
+  bool retryMessage(String peerId, String mid) {
+    final list = _conversations[peerId];
+    if (list == null) return false;
+    for (final m in list) {
+      if (m.id == mid) {
+        if (!m.mine || m.status != MessageStatus.failed) return false;
+        m.status = MessageStatus.sending;
+        _storage.saveMessages(peerId, list);
+        notifyListeners();
+        _flushPending(peerId);
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Re-delivers any of [peerId]'s own messages still `sending` — freshly
   /// queued, or left over from a transfer interrupted (even by an app restart)
   /// — one at a time. Skipped while an active batch is driving delivery itself,

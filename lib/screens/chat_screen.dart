@@ -183,7 +183,15 @@ class _ChatViewState extends State<ChatView> {
                       controller: _scroll,
                       padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
                       itemCount: messages.length,
-                      itemBuilder: (_, i) => _Bubble(message: messages[i]),
+                      itemBuilder: (_, i) {
+                        final m = messages[i];
+                        return _Bubble(
+                          message: m,
+                          onRetry: (m.mine && m.status == MessageStatus.failed)
+                              ? () => controller.retryMessage(widget.peer.id, m.id)
+                              : null,
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -231,8 +239,11 @@ Future<bool> confirmEndHuddle(
 }
 
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.message});
+  const _Bubble({required this.message, this.onRetry});
   final ChatMessage message;
+
+  /// Invoked when the user taps a failed message's indicator to resend it.
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -301,7 +312,8 @@ class _Bubble extends StatelessWidget {
                   ),
                   if (message.mine && message.kind == MessageKind.text) ...[
                     const SizedBox(width: 4),
-                    _StatusTick(status: message.status, tint: fg),
+                    _StatusTick(
+                        status: message.status, tint: fg, onRetry: onRetry),
                   ],
                 ],
               ),
@@ -347,9 +359,12 @@ class _PhotoContent extends StatelessWidget {
 /// Delivery indicator on an outgoing text bubble: a clock while sending, a
 /// double-check once the peer acknowledges, an alert if it couldn't be sent.
 class _StatusTick extends StatelessWidget {
-  const _StatusTick({required this.status, required this.tint});
+  const _StatusTick({required this.status, required this.tint, this.onRetry});
   final MessageStatus status;
   final Color tint;
+
+  /// When the message failed, tapping the indicator resends it.
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -361,8 +376,16 @@ class _StatusTick extends StatelessWidget {
         return Icon(Icons.done_all,
             size: 13, color: tint.withValues(alpha: 0.9));
       case MessageStatus.failed:
-        return Icon(Icons.error_outline,
+        final icon = Icon(Icons.error_outline,
             size: 13, color: Theme.of(context).colorScheme.error);
+        if (onRetry == null) return icon;
+        return GestureDetector(
+          onTap: onRetry,
+          child: Tooltip(
+            message: 'Not delivered — tap to retry',
+            child: Padding(padding: const EdgeInsets.all(2), child: icon),
+          ),
+        );
     }
   }
 }
