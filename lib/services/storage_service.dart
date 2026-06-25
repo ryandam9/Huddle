@@ -124,13 +124,31 @@ class StorageService {
 
   // --- Media ---------------------------------------------------------------
 
-  /// Writes received [bytes] to the app's media directory and returns the
-  /// absolute path of the stored file.
+  /// Writes received [bytes] to the download folder and returns the absolute
+  /// path of the stored file.
+  ///
+  /// If the chosen folder can't be written to — a custom folder that has been
+  /// moved or deleted, or (on a sandboxed macOS build) a folder grant that
+  /// didn't survive an app relaunch — it falls back to the default container
+  /// folder so an incoming file is never silently lost.
   Future<String> saveIncomingPhoto(String fileName, List<int> bytes) async {
-    final dir = await _mediaDir();
     final safe = fileName.replaceAll(RegExp(r'[^\w\-. ]'), '_');
     final stamp = DateTime.now().millisecondsSinceEpoch;
-    final file = File('${dir.path}/${stamp}_$safe');
+    final leaf = '${stamp}_$safe';
+    try {
+      final dir = await _mediaDir();
+      return _writeBytes('${dir.path}/$leaf', bytes);
+    } catch (_) {
+      // Only the custom folder can fail this way; if there is none the default
+      // folder failed and there's nowhere left to fall back to.
+      if (_customDownloadDir == null) rethrow;
+      final dir = await _defaultMediaDir();
+      return _writeBytes('${dir.path}/$leaf', bytes);
+    }
+  }
+
+  Future<String> _writeBytes(String path, List<int> bytes) async {
+    final file = File(path);
     await file.writeAsBytes(bytes, flush: true);
     return file.path;
   }
@@ -140,6 +158,12 @@ class StorageService {
   /// display: it resolves the path but does not require the folder to exist.
   Future<String> resolveMediaPath() async {
     if (_customDownloadDir != null) return _customDownloadDir!;
+    return _defaultMediaPath();
+  }
+
+  /// The app's own media folder inside its container — always writable, even
+  /// under the macOS sandbox, so it doubles as the fallback location.
+  Future<String> _defaultMediaPath() async {
     final base = await getApplicationDocumentsDirectory();
     return '${base.path}/huddle_media';
   }
@@ -160,8 +184,13 @@ class StorageService {
     }
   }
 
-  Future<Directory> _mediaDir() async {
-    final dir = Directory(await resolveMediaPath());
+  Future<Directory> _mediaDir() async => _ensureDir(await resolveMediaPath());
+
+  Future<Directory> _defaultMediaDir() async =>
+      _ensureDir(await _defaultMediaPath());
+
+  Future<Directory> _ensureDir(String path) async {
+    final dir = Directory(path);
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
