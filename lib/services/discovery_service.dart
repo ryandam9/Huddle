@@ -79,7 +79,8 @@ class DiscoveryService {
     final type = json['type'];
     if (type != kBeaconType && type != kProbeType) return;
 
-    final endpoint = Endpoint.fromJson(json);
+    final endpoint = Endpoint.tryFromJson(json);
+    if (endpoint == null) return; // malformed beacon — ignore
     // Ignore our own messages (they come back on broadcast).
     if (endpoint.id == identity.id) return;
 
