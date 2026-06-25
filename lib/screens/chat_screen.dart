@@ -120,12 +120,9 @@ class _ChatViewState extends State<ChatView> {
     final text = _input.text;
     if (text.trim().isEmpty) return;
     _input.clear();
-    final ok = await controller.sendText(widget.peer.id, text);
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Message saved, but peer is offline.')),
-      );
-    }
+    // Delivery happens in the background with retry; the bubble's status tick
+    // (sending → delivered/failed) reflects the outcome.
+    await controller.sendText(widget.peer.id, text);
   }
 
   Future<void> _sendPhotos(HuddleController controller) async {
@@ -294,10 +291,19 @@ class _Bubble extends StatelessWidget {
             Padding(
               padding: EdgeInsets.only(
                   top: 3, right: message.kind == MessageKind.photo ? 6 : 0),
-              child: Text(
-                formatTime(message.sentAt),
-                style: TextStyle(
-                    fontSize: 10, color: fg.withValues(alpha: 0.7)),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    formatTime(message.sentAt),
+                    style: TextStyle(
+                        fontSize: 10, color: fg.withValues(alpha: 0.7)),
+                  ),
+                  if (message.mine && message.kind == MessageKind.text) ...[
+                    const SizedBox(width: 4),
+                    _StatusTick(status: message.status, tint: fg),
+                  ],
+                ],
               ),
             ),
           ],
@@ -335,6 +341,29 @@ class _PhotoContent extends StatelessWidget {
         child: Image.file(File(path), fit: BoxFit.cover),
       ),
     );
+  }
+}
+
+/// Delivery indicator on an outgoing text bubble: a clock while sending, a
+/// double-check once the peer acknowledges, an alert if it couldn't be sent.
+class _StatusTick extends StatelessWidget {
+  const _StatusTick({required this.status, required this.tint});
+  final MessageStatus status;
+  final Color tint;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (status) {
+      case MessageStatus.sending:
+        return Icon(Icons.schedule,
+            size: 12, color: tint.withValues(alpha: 0.7));
+      case MessageStatus.delivered:
+        return Icon(Icons.done_all,
+            size: 13, color: tint.withValues(alpha: 0.9));
+      case MessageStatus.failed:
+        return Icon(Icons.error_outline,
+            size: 13, color: Theme.of(context).colorScheme.error);
+    }
   }
 }
 

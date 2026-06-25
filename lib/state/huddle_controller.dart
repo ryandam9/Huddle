@@ -490,28 +490,64 @@ class HuddleController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Sends a text message. It's stored and shown immediately (optimistically)
+  /// with a `sending` status, then delivered in the background with
+  /// acknowledgement + retry — its status advances to `delivered` once the peer
+  /// confirms receipt, or `failed` if it can't be reached. Returns true if the
+  /// message was accepted (paired and non-empty).
   Future<bool> sendText(String peerId, String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty || !isPaired(peerId)) return false;
 
     final mid = _uuid.v4();
-    final message = ChatMessage(
-      id: mid,
-      peerId: peerId,
-      mine: true,
-      kind: MessageKind.text,
-      sentAt: DateTime.now(),
-      text: trimmed,
+    final now = DateTime.now();
+    _appendMessage(
+      peerId,
+      ChatMessage(
+        id: mid,
+        peerId: peerId,
+        mine: true,
+        kind: MessageKind.text,
+        sentAt: now,
+        text: trimmed,
+        status: MessageStatus.sending,
+      ),
     );
-    _appendMessage(peerId, message);
 
+    // Deliver in the background so the composer stays responsive; the bubble's
+    // status reflects the outcome.
+    unawaited(_deliverTextReliably(peerId, mid, trimmed, now));
+    return true;
+  }
+
+  Future<void> _deliverTextReliably(
+      String peerId, String mid, String text, DateTime sentAt) async {
     final device = _devices[peerId];
-    if (device == null) return false;
-    return _send(device.host, device.port, FrameType.text, {
-      'mid': mid,
-      'text': trimmed,
-      'ts': message.sentAt.millisecondsSinceEpoch,
-    });
+    final delivered = device != null &&
+        await _sendReliably(device.host, device.port, FrameType.text, {
+          'mid': mid,
+          'text': text,
+          'ts': sentAt.millisecondsSinceEpoch,
+        }, mid);
+    _setMessageStatus(peerId, mid,
+        delivered ? MessageStatus.delivered : MessageStatus.failed);
+  }
+
+  /// Advances the delivery [status] of message [mid] in [peerId]'s conversation
+  /// (e.g. when its acknowledgement arrives) and persists the change.
+  void _setMessageStatus(String peerId, String mid, MessageStatus status) {
+    final list = _conversations[peerId];
+    if (list == null) return;
+    for (final m in list) {
+      if (m.id == mid) {
+        if (m.status != status) {
+          m.status = status;
+          _storage.saveMessages(peerId, list);
+          notifyListeners();
+        }
+        return;
+      }
+    }
   }
 
   /// Sends a single photo. Interactive (fire-once): the local copy is stored
@@ -722,7 +758,10 @@ class HuddleController extends ChangeNotifier {
     final text = frame.data['text'] as String?;
     if (text == null) return;
     final mid = (frame.data['mid'] as String?) ?? _uuid.v4();
-    if (_isDuplicate(frame.from.id, mid)) return;
+    if (_isDuplicate(frame.from.id, mid)) {
+      _ackTo(frame.from, mid); // already stored — re-confirm so sender stops retrying
+      return;
+    }
 
     _appendMessage(
       frame.from.id,
@@ -736,6 +775,7 @@ class HuddleController extends ChangeNotifier {
       ),
       bumpUnread: true,
     );
+    _ackTo(frame.from, mid); // confirm receipt for the reliable sender
     _tick(); // felt a new message arrive
     _notifyReceived('New message from ${frame.from.name}');
   }

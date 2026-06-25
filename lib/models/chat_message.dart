@@ -1,6 +1,11 @@
 /// The kind of payload a [ChatMessage] carries.
 enum MessageKind { text, photo, system }
 
+/// Delivery state of an outgoing message. Incoming and historical messages are
+/// always [delivered]; only our own freshly-sent ones pass through [sending]
+/// on the way to [delivered] (acknowledged by the peer) or [failed].
+enum MessageStatus { sending, delivered, failed }
+
 /// A single entry in a conversation with a peer.
 ///
 /// Messages are stored locally (per peer) so history survives restarts.
@@ -16,6 +21,7 @@ class ChatMessage {
     this.text,
     this.filePath,
     this.fileName,
+    this.status = MessageStatus.delivered,
   });
 
   /// Unique id of the message (also used to de-duplicate on the wire).
@@ -34,6 +40,10 @@ class ChatMessage {
   final String? filePath;
   final String? fileName;
 
+  /// Delivery state, mutable because it advances after the message is created
+  /// (sending → delivered/failed) as acknowledgements arrive.
+  MessageStatus status;
+
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     return ChatMessage(
       id: json['id'] as String,
@@ -49,6 +59,12 @@ class ChatMessage {
       text: json['text'] as String?,
       filePath: json['filePath'] as String?,
       fileName: json['fileName'] as String?,
+      // Older records (and received messages) have no status → treat as
+      // delivered so history never shows a stuck "sending" clock.
+      status: MessageStatus.values.firstWhere(
+        (s) => s.name == json['status'],
+        orElse: () => MessageStatus.delivered,
+      ),
     );
   }
 
@@ -61,5 +77,6 @@ class ChatMessage {
         'text': text,
         'filePath': filePath,
         'fileName': fileName,
+        'status': status.name,
       };
 }
