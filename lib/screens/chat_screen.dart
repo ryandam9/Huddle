@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -96,7 +97,6 @@ class ChatView extends StatefulWidget {
 class _ChatViewState extends State<ChatView> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
-  bool _sending = false;
 
   @override
   void dispose() {
@@ -125,27 +125,26 @@ class _ChatViewState extends State<ChatView> {
     }
   }
 
-  Future<void> _sendPhoto(HuddleController controller) async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
-    final path = picked?.path;
-    if (path == null) return;
-
-    setState(() => _sending = true);
-    final ok = await controller.sendPhoto(widget.peer.id, path);
-    if (mounted) {
-      setState(() => _sending = false);
-      if (!ok) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Photo saved, but peer is offline.')),
-        );
-      }
-    }
+  Future<void> _sendPhotos(HuddleController controller) async {
+    // Multi-select works across every platform (unlike a directory picker);
+    // one or many, they're handed to the controller's background batch sender.
+    final picked = await ImagePicker().pickMultiImage();
+    if (picked.isEmpty) return;
+    final paths = [for (final x in picked) x.path];
+    // Fire-and-forget: the batch streams out in the background and its progress
+    // is surfaced from controller.transfer.
+    unawaited(controller.sendPhotos(widget.peer.id, paths));
   }
 
   @override
   Widget build(BuildContext context) {
     final controller = context.watch<HuddleController>();
     final messages = controller.conversation(widget.peer.id);
+
+    final transfer = controller.transfer;
+    final sendingHere = transfer != null &&
+        transfer.peerId == widget.peer.id &&
+        !transfer.isComplete;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       controller.markRead(widget.peer.id);
@@ -174,11 +173,12 @@ class _ChatViewState extends State<ChatView> {
                   ),
                 ),
         ),
+        if (sendingHere) _TransferStrip(progress: transfer),
         _Composer(
           controller: _input,
-          sending: _sending,
+          sending: sendingHere,
           onSend: () => _sendText(controller),
-          onAttach: () => _sendPhoto(controller),
+          onAttach: () => _sendPhotos(controller),
         ),
       ],
     );
@@ -313,6 +313,44 @@ class _PhotoContent extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 260, maxWidth: 320),
         child: Image.file(File(path), fit: BoxFit.cover),
+      ),
+    );
+  }
+}
+
+/// A slim progress bar shown above the composer while a batch of photos is
+/// streaming out in the background.
+class _TransferStrip extends StatelessWidget {
+  const _TransferStrip({required this.progress});
+  final TransferProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final done = progress.completed;
+    final total = progress.total;
+    return Material(
+      color: scheme.surfaceContainerHigh,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                progress.failed > 0
+                    ? 'Sending photos… $done/$total (${progress.failed} failed)'
+                    : 'Sending photos… $done/$total',
+                style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
