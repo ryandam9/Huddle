@@ -11,6 +11,7 @@ import '../models/chat_message.dart';
 import '../models/device.dart';
 import '../models/peer.dart';
 import '../services/discovery_service.dart';
+import '../services/foreground_service.dart';
 import '../services/identity.dart';
 import '../services/pairing.dart';
 import '../services/protocol.dart';
@@ -90,7 +91,12 @@ class TransferProgress {
 /// Owns discovery, transport, identity, persistence and the in-memory view of
 /// devices, peers and conversations. The UI observes this via [ChangeNotifier].
 class HuddleController extends ChangeNotifier {
-  HuddleController();
+  HuddleController({ForegroundService? foreground})
+      : _foreground = foreground ?? AndroidForegroundService();
+
+  /// Keeps the process alive during a batch so it can finish in the background
+  /// (Android only; a no-op elsewhere). Injectable for tests.
+  final ForegroundService _foreground;
 
   late final SharedPreferences _prefs;
   late final StorageService _storage;
@@ -716,17 +722,25 @@ class HuddleController extends ChangeNotifier {
     _transfer = TransferProgress(peerId: peerId, total: pending.length);
     notifyListeners();
 
-    for (final message in pending) {
-      final result = await _deliverStored(peerId, message);
-      if (result == null) {
-        // Peer became unreachable — the rest stay queued and resume on its next
-        // appearance. Stop showing active progress.
-        _transfer = null;
+    // Keep the process alive so the batch can finish even if the app is
+    // backgrounded (Android foreground service; a no-op on other platforms).
+    final noun = pending.length == 1 ? 'photo' : 'photos';
+    await _foreground.start('Sending ${pending.length} $noun…');
+    try {
+      for (final message in pending) {
+        final result = await _deliverStored(peerId, message);
+        if (result == null) {
+          // Peer became unreachable — the rest stay queued and resume on its
+          // next appearance. Stop showing active progress.
+          _transfer = null;
+          notifyListeners();
+          return;
+        }
+        _transfer = _transfer!._advance(ok: result);
         notifyListeners();
-        return;
       }
-      _transfer = _transfer!._advance(ok: result);
-      notifyListeners();
+    } finally {
+      await _foreground.stop();
     }
   }
 
