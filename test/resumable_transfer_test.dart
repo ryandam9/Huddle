@@ -9,6 +9,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart' as sembast;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:huddle/models/chat_message.dart';
@@ -48,7 +49,7 @@ void main() {
   Future<HuddleController> start(String id, String name,
       {String? pairedId}) async {
     SharedPreferences.setMockInitialValues(_seed(id, name, tempDir().path, pairedId));
-    final c = HuddleController();
+    final c = HuddleController(databaseFactory: sembast.newDatabaseFactoryMemory());
     await c.init();
     controllers.add(c);
     expect(c.tcpPort, greaterThan(0));
@@ -98,16 +99,19 @@ void main() {
   test('a queued message survives a restart and is resent when the peer appears',
       () async {
     final dir = tempDir().path;
+    // A shared in-memory database stands in for the on-disk store that would
+    // survive the process restart, so the second controller reloads the queue.
+    final store = sembast.newDatabaseFactoryMemory();
     // First run: queue a message while the peer is absent, then "quit".
     SharedPreferences.setMockInitialValues(_seed('A', 'A', dir, 'B'));
-    final a1 = HuddleController();
+    final a1 = HuddleController(databaseFactory: store);
     await a1.init();
     await a1.sendText('B', 'survive the restart');
     expect(a1.conversation('B').single.status, MessageStatus.sending);
     a1.dispose(); // not tracked in `controllers`; disposed here
 
     // Second run: a fresh controller over the same store reloads the queue.
-    final a2 = HuddleController();
+    final a2 = HuddleController(databaseFactory: store);
     await a2.init();
     controllers.add(a2);
     expect(a2.conversation('B').single.text, 'survive the restart');

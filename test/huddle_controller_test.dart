@@ -5,10 +5,12 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart' as sembast;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:huddle/models/chat_message.dart';
 import 'package:huddle/models/peer.dart';
+import 'package:huddle/services/message_store.dart';
 import 'package:huddle/services/protocol.dart';
 import 'package:huddle/services/storage_service.dart';
 import 'package:huddle/state/huddle_controller.dart';
@@ -17,15 +19,24 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   final controllers = <HuddleController>[];
+  late sembast.DatabaseFactory dbFactory;
 
   Future<HuddleController> start() async {
-    final c = HuddleController();
+    final c = HuddleController(databaseFactory: dbFactory);
     await c.init();
     controllers.add(c);
     return c;
   }
 
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  /// A store over the same in-memory database the controllers use, so a test
+  /// can seed history before a launch and assert what was persisted after.
+  Future<MessageStore> messageStore() async =>
+      MessageStore(await dbFactory.openDatabase('huddle.db'));
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    dbFactory = sembast.newDatabaseFactoryMemory();
+  });
 
   tearDown(() {
     for (final c in controllers) {
@@ -52,7 +63,7 @@ void main() {
           platform: 'macos',
           pairedAt: DateTime.fromMillisecondsSinceEpoch(5)),
     ]);
-    await storage.saveMessages('p1', [
+    await (await messageStore()).append(
       ChatMessage(
         id: 'm1',
         peerId: 'p1',
@@ -61,12 +72,25 @@ void main() {
         sentAt: DateTime.fromMillisecondsSinceEpoch(10),
         text: 'welcome back',
       ),
-    ]);
+    );
 
     final c = await start();
     expect(c.peers.map((p) => p.id), ['p1']);
     expect(c.isPaired('p1'), isTrue);
     expect(c.conversation('p1').single.text, 'welcome back');
+  });
+
+  test('restores unread counts from the database on init', () async {
+    await StorageService(await SharedPreferences.getInstance()).savePeers([
+      Peer(id: 'p1', name: 'Phone', platform: 'android', pairedAt: DateTime(2026)),
+    ]);
+    // Unread / pending read-receipt state persisted by a previous run.
+    await (await messageStore())
+        .saveMeta('p1', unread: 3, unacked: ['m1', 'm2']);
+
+    final c = await start();
+    expect(c.unreadFor('p1'), 3);
+    expect(c.totalUnread, 3);
   });
 
   test('sendText to an unpaired id is rejected and stores nothing', () async {
@@ -93,9 +117,9 @@ void main() {
     // peer reappears (even across a restart).
     expect(convo.single.status, MessageStatus.sending);
 
-    // Persisted for next launch.
-    expect(StorageService(prefs).loadMessages('p1').single.text,
-        'are you there?');
+    // Persisted for next launch (in the database now, not shared_preferences).
+    final stored = await (await messageStore()).messagesFor('p1');
+    expect(stored.single.text, 'are you there?');
   });
 
   test('blank text is ignored', () async {
@@ -115,7 +139,7 @@ void main() {
     await storage.savePeers([
       Peer(id: 'p1', name: 'Phone', platform: 'android', pairedAt: DateTime(2026)),
     ]);
-    await storage.saveMessages('p1', [
+    await (await messageStore()).append(
       ChatMessage(
           id: 'm',
           peerId: 'p1',
@@ -123,7 +147,7 @@ void main() {
           kind: MessageKind.text,
           sentAt: DateTime(2026),
           text: 'hi'),
-    ]);
+    );
     final c = await start();
     expect(c.isPaired('p1'), isTrue);
 
@@ -131,7 +155,7 @@ void main() {
     expect(c.isPaired('p1'), isFalse);
     expect(c.conversation('p1'), isEmpty);
     expect(storage.loadPeers(), isEmpty);
-    expect(storage.loadMessages('p1'), isEmpty);
+    expect(await (await messageStore()).messagesFor('p1'), isEmpty);
   });
 
   test('renameSelf updates and persists the display name', () async {

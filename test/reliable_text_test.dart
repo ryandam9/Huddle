@@ -8,6 +8,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart' as sembast;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:huddle/models/chat_message.dart';
@@ -62,7 +63,7 @@ void main() {
       ]);
     }
     SharedPreferences.setMockInitialValues(values);
-    final c = HuddleController();
+    final c = HuddleController(databaseFactory: sembast.newDatabaseFactoryMemory());
     await c.init();
     controllers.add(c);
     expect(c.tcpPort, greaterThan(0));

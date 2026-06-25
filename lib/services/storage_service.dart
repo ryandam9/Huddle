@@ -5,11 +5,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
-import '../models/chat_message.dart';
 import '../models/peer.dart';
 import 'protocol.dart';
 
-/// Persists paired peers, conversation history and received photo bytes.
+/// Persists paired peers, network/download settings and received photo bytes.
+/// Conversation history lives in the database (see MessageStore).
 class StorageService {
   StorageService(this._prefs) {
     _customDownloadDir = loadCustomDownloadDir();
@@ -26,7 +26,6 @@ class StorageService {
   }
 
   static const _peersKey = 'huddle.peers';
-  static String _msgsKey(String peerId) => 'huddle.msgs.$peerId';
   static const _broadcastKey = 'huddle.net.broadcast';
   static const _portKey = 'huddle.net.port';
   static const _downloadDirKey = 'huddle.media.dir';
@@ -99,29 +98,8 @@ class StorageService {
     await _prefs.setString(_peersKey, raw);
   }
 
-  // --- Conversations -------------------------------------------------------
-
-  List<ChatMessage> loadMessages(String peerId) {
-    final raw = _prefs.getString(_msgsKey(peerId));
-    if (raw == null || raw.isEmpty) return [];
-    try {
-      final list = jsonDecode(raw) as List<dynamic>;
-      return list
-          .map((e) => ChatMessage.fromJson(e as Map<String, dynamic>))
-          .toList();
-    } catch (_) {
-      return [];
-    }
-  }
-
-  Future<void> saveMessages(String peerId, List<ChatMessage> messages) async {
-    final raw = jsonEncode(messages.map((m) => m.toJson()).toList());
-    await _prefs.setString(_msgsKey(peerId), raw);
-  }
-
-  Future<void> deleteConversation(String peerId) async {
-    await _prefs.remove(_msgsKey(peerId));
-  }
+  // Conversation history now lives in the database (see MessageStore); it is no
+  // longer serialised into shared_preferences.
 
   // --- Media ---------------------------------------------------------------
 

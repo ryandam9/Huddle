@@ -4,10 +4,12 @@
 // history (no networking needed).
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart' as sembast;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:huddle/models/chat_message.dart';
 import 'package:huddle/models/peer.dart';
+import 'package:huddle/services/message_store.dart';
 import 'package:huddle/services/storage_service.dart';
 import 'package:huddle/state/huddle_controller.dart';
 
@@ -15,8 +17,12 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   final controllers = <HuddleController>[];
+  late sembast.DatabaseFactory dbFactory;
 
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    dbFactory = sembast.newDatabaseFactoryMemory();
+  });
   tearDown(() {
     for (final c in controllers) {
       c.dispose();
@@ -33,14 +39,25 @@ void main() {
         text: text,
       );
 
+  /// A store over the same in-memory database the controller uses, for seeding
+  /// history and asserting what remains persisted.
+  Future<MessageStore> messageStore() async =>
+      MessageStore(await dbFactory.openDatabase('huddle.db'));
+
   Future<HuddleController> startWithHistory() async {
     final storage = StorageService(await SharedPreferences.getInstance());
     await storage.savePeers([
       Peer(id: 'p1', name: 'Phone', platform: 'android', pairedAt: DateTime(2026)),
     ]);
-    await storage
-        .saveMessages('p1', [msg('m1', true, 'first'), msg('m2', false, 'second'), msg('m3', true, 'third')]);
-    final c = HuddleController();
+    final store = await messageStore();
+    for (final m in [
+      msg('m1', true, 'first'),
+      msg('m2', false, 'second'),
+      msg('m3', true, 'third'),
+    ]) {
+      await store.append(m);
+    }
+    final c = HuddleController(databaseFactory: dbFactory);
     await c.init();
     controllers.add(c);
     return c;
@@ -57,9 +74,12 @@ void main() {
     expect(c.isPaired('p1'), isTrue); // agreement preserved
 
     // Persisted: the history is gone but the peer remains.
-    final reloaded = StorageService(await SharedPreferences.getInstance());
-    expect(reloaded.loadMessages('p1'), isEmpty);
-    expect(reloaded.loadPeers().map((p) => p.id), ['p1']);
+    expect(await (await messageStore()).messagesFor('p1'), isEmpty);
+    expect(
+        StorageService(await SharedPreferences.getInstance())
+            .loadPeers()
+            .map((p) => p.id),
+        ['p1']);
   });
 
   test('deleteMessage removes one message and keeps the rest', () async {
@@ -69,8 +89,8 @@ void main() {
     expect(c.conversation('p1').map((m) => m.id), ['m1', 'm3']);
 
     // Persisted.
-    final reloaded = StorageService(await SharedPreferences.getInstance());
-    expect(reloaded.loadMessages('p1').map((m) => m.id), ['m1', 'm3']);
+    expect((await (await messageStore()).messagesFor('p1')).map((m) => m.id),
+        ['m1', 'm3']);
   });
 
   test('deleteMessage is a no-op for an unknown message or peer', () async {
