@@ -121,6 +121,25 @@ class _ChatViewState extends State<ChatView> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
 
+  /// Message count at the previous build. Side effects (mark-read, auto-scroll)
+  /// fire only when this changes — i.e. when messages actually arrive — rather
+  /// than on every rebuild (which also happens for device pruning, transfer
+  /// progress, theme/keyboard changes, etc.) as it used to (finding #19).
+  int _lastCount = 0;
+
+  @override
+  void didUpdateWidget(covariant ChatView old) {
+    super.didUpdateWidget(old);
+    // A desktop master-detail switch reuses this State for a different peer:
+    // treat it as a fresh conversation and jump to its latest message.
+    if (old.peer.id != widget.peer.id) {
+      _lastCount = 0;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _jumpToBottom();
+      });
+    }
+  }
+
   @override
   void dispose() {
     _input.dispose();
@@ -128,11 +147,27 @@ class _ChatViewState extends State<ChatView> {
     super.dispose();
   }
 
-  void _scrollToBottom() {
+  bool get _atBottom {
+    if (!_scroll.hasClients) return true; // before first layout → start pinned
+    final p = _scroll.position;
+    return p.maxScrollExtent - p.pixels < 120;
+  }
+
+  void _jumpToBottom() {
+    if (_scroll.hasClients) {
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    }
+  }
+
+  /// Reacts to new messages while the conversation is on screen: mark them read
+  /// and keep the view pinned to the bottom, but only if the user was already
+  /// near it — so scrolling up to read history isn't yanked back down.
+  void _onMessagesAppeared(HuddleController controller) {
+    final wasAtBottom = _atBottom;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) {
-        _scroll.jumpTo(_scroll.position.maxScrollExtent);
-      }
+      if (!mounted) return;
+      controller.markRead(widget.peer.id);
+      if (wasAtBottom) _jumpToBottom();
     });
   }
 
@@ -204,10 +239,10 @@ class _ChatViewState extends State<ChatView> {
         transfer.peerId == widget.peer.id &&
         !transfer.isComplete;
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      controller.markRead(widget.peer.id);
-    });
-    _scrollToBottom();
+    if (messages.length != _lastCount) {
+      _lastCount = messages.length;
+      _onMessagesAppeared(controller);
+    }
 
     return Column(
       children: [
@@ -410,8 +445,29 @@ class _PhotoContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final path = message.filePath;
-    if (path == null || !File(path).existsSync()) {
-      return Padding(
+    if (path == null) return _placeholder();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 260, maxWidth: 320),
+        child: Image.file(
+          File(path),
+          fit: BoxFit.cover,
+          // Decode at roughly twice the bubble's size (for hi-dpi) rather than
+          // the photo's full resolution, so a large image doesn't cost megabytes
+          // of memory just to render a thumbnail (finding #20).
+          cacheWidth: 640,
+          cacheHeight: 520,
+          // Handle a missing/unreadable/corrupt file asynchronously here instead
+          // of a synchronous File.existsSync() in build, which blocks the UI
+          // thread on every rebuild.
+          errorBuilder: (_, _, _) => _placeholder(),
+        ),
+      ),
+    );
+  }
+
+  Widget _placeholder() => Padding(
         padding: const EdgeInsets.all(8),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -422,15 +478,6 @@ class _PhotoContent extends StatelessWidget {
           ],
         ),
       );
-    }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 260, maxWidth: 320),
-        child: Image.file(File(path), fit: BoxFit.cover),
-      ),
-    );
-  }
 }
 
 /// Delivery indicator on an outgoing text bubble: a clock while sending, a
