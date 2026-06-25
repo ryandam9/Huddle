@@ -31,6 +31,17 @@ void main() {
       expect(formatRelative(now.subtract(const Duration(hours: 3))), '3h ago');
       expect(formatRelative(now.subtract(const Duration(days: 2))), '2d ago');
     });
+
+    test('rolls over cleanly at the unit boundaries', () {
+      final now = DateTime.now();
+      expect(
+          formatRelative(now.subtract(const Duration(seconds: 44))), 'just now');
+      expect(
+          formatRelative(now.subtract(const Duration(minutes: 59))), '59m ago');
+      expect(formatRelative(now.subtract(const Duration(minutes: 60))), '1h ago');
+      expect(formatRelative(now.subtract(const Duration(hours: 23))), '23h ago');
+      expect(formatRelative(now.subtract(const Duration(hours: 24))), '1d ago');
+    });
   });
 
   group('platformIcon', () {

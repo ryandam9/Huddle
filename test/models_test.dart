@@ -35,6 +35,27 @@ void main() {
       expect(updated.host, '10.0.0.3');
       expect(updated.port, 5000); // preserved
     });
+
+    test('copyWith with no arguments preserves every field', () {
+      final original = make(DateTime(2024, 5, 6, 7, 8));
+      final clone = original.copyWith();
+      expect(clone.id, original.id);
+      expect(clone.name, original.name);
+      expect(clone.host, original.host);
+      expect(clone.port, original.port);
+      expect(clone.platform, original.platform);
+      expect(clone.lastSeen, original.lastSeen);
+    });
+
+    test('online status tracks the window boundary', () {
+      final justInside = make(DateTime.now()
+          .subtract(Device.onlineWindow - const Duration(seconds: 1)));
+      expect(justInside.isOnline, isTrue);
+
+      final justOutside = make(DateTime.now()
+          .subtract(Device.onlineWindow + const Duration(seconds: 1)));
+      expect(justOutside.isOnline, isFalse);
+    });
   });
 
   group('Peer', () {
@@ -103,6 +124,32 @@ void main() {
         'sentAt': 0,
       });
       expect(decoded.kind, MessageKind.text);
+    });
+
+    test('round-trips a system message and keeps media fields null', () {
+      final msg = ChatMessage(
+        id: 'm4',
+        peerId: 'p1',
+        mine: false,
+        kind: MessageKind.system,
+        sentAt: DateTime.fromMillisecondsSinceEpoch(4000),
+        text: 'You are now connected.',
+      );
+      final decoded = ChatMessage.fromJson(msg.toJson());
+      expect(decoded.kind, MessageKind.system);
+      expect(decoded.text, 'You are now connected.');
+      expect(decoded.filePath, isNull);
+      expect(decoded.fileName, isNull);
+    });
+
+    test('defaults mine to false when the field is absent', () {
+      final decoded = ChatMessage.fromJson({
+        'id': 'm5',
+        'peerId': 'p1',
+        'kind': 'text',
+        'sentAt': 0,
+      });
+      expect(decoded.mine, isFalse);
     });
   });
 }
