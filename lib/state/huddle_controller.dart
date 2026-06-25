@@ -51,6 +51,40 @@ class OutgoingPairing {
   PairStatus status;
 }
 
+/// Progress of a background batch photo send, surfaced to the UI so it can show
+/// "sending 3 of 10" without the caller having to await the whole batch.
+class TransferProgress {
+  const TransferProgress({
+    required this.peerId,
+    required this.total,
+    this.sent = 0,
+    this.failed = 0,
+  });
+
+  /// The peer the batch is being sent to.
+  final String peerId;
+
+  /// Number of files in the batch.
+  final int total;
+
+  /// Files delivered (flushed to the peer) so far.
+  final int sent;
+
+  /// Files that could not be delivered (e.g. the peer is offline).
+  final int failed;
+
+  int get completed => sent + failed;
+  int get remaining => total - completed;
+  bool get isComplete => completed >= total;
+
+  TransferProgress _advance({required bool ok}) => TransferProgress(
+        peerId: peerId,
+        total: total,
+        sent: ok ? sent + 1 : sent,
+        failed: ok ? failed : failed + 1,
+      );
+}
+
 /// Central application state and coordinator.
 ///
 /// Owns discovery, transport, identity, persistence and the in-memory view of
@@ -97,6 +131,12 @@ class HuddleController extends ChangeNotifier {
 
   /// The pairing the local user is currently initiating, if any.
   OutgoingPairing? outgoingPairing;
+
+  /// Progress of the current (or most recent) background batch photo send.
+  TransferProgress? _transfer;
+
+  /// Serialises batch sends so two batches never interleave on the wire.
+  Future<void> _transferChain = Future.value();
 
   /// Codes we generated and displayed for outgoing pairings, keyed by peer id,
   /// used to verify the code the other device echoes back.
@@ -155,6 +195,10 @@ class HuddleController extends ChangeNotifier {
 
   /// Whether incoming files and messages raise an in-app notification.
   bool get notifyOnReceive => _notifyOnReceive;
+
+  /// Progress of the current (or most recent) background batch photo send, or
+  /// null if none has been started. Observe to show a "sending 3 of 10" strip.
+  TransferProgress? get transfer => _transfer;
 
   /// The broadcast addresses discovery is currently sending beacons to.
   Future<List<String>> broadcastTargets() async {
@@ -461,6 +505,30 @@ class HuddleController extends ChangeNotifier {
     });
   }
 
+  /// Sends every photo in [paths] to [peerId], one after another, in the
+  /// background. Returns immediately to the caller (fire-and-forget); progress
+  /// is published via [transfer] for the UI to observe. Successive calls are
+  /// queued so two batches never interleave their frames on the wire.
+  Future<void> sendPhotos(String peerId, List<String> paths) {
+    _transferChain = _transferChain.then((_) => _runBatch(peerId, paths));
+    return _transferChain;
+  }
+
+  Future<void> _runBatch(String peerId, List<String> paths) async {
+    if (!isPaired(peerId)) return;
+    final items = paths.where((p) => p.trim().isNotEmpty).toList();
+    if (items.isEmpty) return;
+
+    _transfer = TransferProgress(peerId: peerId, total: items.length);
+    notifyListeners();
+
+    for (final path in items) {
+      final ok = await sendPhoto(peerId, path);
+      _transfer = _transfer!._advance(ok: ok);
+      notifyListeners();
+    }
+  }
+
   /// Ends the agreement with [peerId] and notifies the other device.
   Future<void> unpair(String peerId) async {
     final device = _devices[peerId];
@@ -630,13 +698,35 @@ class HuddleController extends ChangeNotifier {
       bumpUnread: true,
     );
     _tick(); // felt a new photo arrive
-    _notifyReceived('Saved "$name" from ${frame.from.name}');
+    _notifyPhotoReceived(frame.from.name);
   }
 
   /// Raises a transient in-app notice for received content, when the user has
   /// notifications enabled. Reuses the same channel as pairing notices.
   void _notifyReceived(String message) {
     if (_notifyOnReceive) onNotice?.call(message);
+  }
+
+  // Coalesces a burst of received photos (a batch send) into a single notice
+  // rather than firing one notification per file.
+  int _photoNoticeCount = 0;
+  String? _photoNoticeFrom;
+  Timer? _photoNoticeTimer;
+
+  void _notifyPhotoReceived(String fromName) {
+    if (!_notifyOnReceive) return;
+    _photoNoticeCount++;
+    _photoNoticeFrom = fromName;
+    _photoNoticeTimer?.cancel();
+    _photoNoticeTimer = Timer(const Duration(milliseconds: 1200), () {
+      final count = _photoNoticeCount;
+      final from = _photoNoticeFrom ?? 'a device';
+      _photoNoticeCount = 0;
+      _photoNoticeFrom = null;
+      onNotice?.call(count == 1
+          ? 'Saved a photo from $from'
+          : 'Saved $count photos from $from');
+    });
   }
 
   void _onUnpair(Endpoint from) {
@@ -711,6 +801,7 @@ class HuddleController extends ChangeNotifier {
   @override
   void dispose() {
     _pruneTimer?.cancel();
+    _photoNoticeTimer?.cancel();
     _discovery?.dispose();
     _transport?.dispose();
     super.dispose();
