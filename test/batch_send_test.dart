@@ -117,19 +117,19 @@ void main() {
     }
   });
 
-  test('reports per-file failures when the peer is unreachable', () async {
-    // Paired, but with no device endpoint to reach → every send fails.
+  test('queues a batch when the peer is unreachable', () async {
+    // Paired, but with no device endpoint → the batch is stored and queued.
     final a = await start('AAAA', 'Device A', pairedId: 'GHOST');
 
     await a.sendPhotos('GHOST', makePhotos(2));
 
-    expect(a.transfer!.total, 2);
-    expect(a.transfer!.sent, 0);
-    expect(a.transfer!.failed, 2);
-    expect(a.transfer!.isComplete, isTrue);
-    // Local copies are still kept so the bubbles render.
-    expect(a.conversation('GHOST').where((m) => m.kind == MessageKind.photo),
-        hasLength(2));
+    // Nothing could be sent yet, so there's no active progress…
+    expect(a.transfer, isNull);
+    // …but both files are persisted as queued, ready to resume on reconnect.
+    final photos =
+        a.conversation('GHOST').where((m) => m.kind == MessageKind.photo);
+    expect(photos, hasLength(2));
+    expect(photos.every((m) => m.status == MessageStatus.sending), isTrue);
   });
 
   test('an empty selection starts no transfer', () async {

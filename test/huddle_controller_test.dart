@@ -89,9 +89,9 @@ void main() {
     expect(convo.single.text, 'are you there?');
     expect(convo.single.mine, isTrue);
 
-    // With no endpoint to reach, background delivery gives up → failed.
-    await _eventually(
-        () => c.conversation('p1').single.status == MessageStatus.failed);
+    // No endpoint yet → it stays queued (sending), to be delivered when the
+    // peer reappears (even across a restart).
+    expect(convo.single.status, MessageStatus.sending);
 
     // Persisted for next launch.
     expect(StorageService(prefs).loadMessages('p1').single.text,
@@ -245,17 +245,4 @@ void main() {
       expect(c.isCustomDownloadDir, isFalse);
     });
   });
-}
-
-/// Polls [cond] until it holds or the timeout elapses (for background work
-/// like reliable delivery that settles a message's status asynchronously).
-Future<void> _eventually(bool Function() cond,
-    {Duration timeout = const Duration(seconds: 5)}) async {
-  final deadline = DateTime.now().add(timeout);
-  while (!cond()) {
-    if (DateTime.now().isAfter(deadline)) {
-      throw StateError('Timed out waiting for condition');
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-  }
 }

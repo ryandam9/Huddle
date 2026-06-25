@@ -5,6 +5,7 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -49,6 +50,10 @@ void main() {
       'huddle.identity.id': id,
       'huddle.identity.name': name,
       'huddle.media.dir': tempDir().path,
+      // A unique discovery port per controller so neither sibling controllers
+      // nor parallel test isolates cross-discover over the real UDP port; these
+      // tests wire peers explicitly via ingestBeacon.
+      'huddle.net.port': _isolatedPort(),
     };
     if (pairedId != null) {
       values['huddle.peers'] = jsonEncode([
@@ -122,14 +127,22 @@ void main() {
         () => a.conversation('p1').single.status == MessageStatus.failed);
   });
 
-  test('a text to a peer with no known endpoint fails', () async {
-    final a = await start('A', 'A', pairedId: 'GHOST');
+  test('a text queued while unreachable delivers when the peer appears',
+      () async {
+    final a = await start('A', 'A', pairedId: 'B');
+    final b = await start('B', 'B', pairedId: 'A');
+    // Deliberately not wired yet — A has no endpoint for B.
 
-    final ok = await a.sendText('GHOST', 'anyone home?');
-    expect(ok, isTrue); // accepted and stored
+    final ok = await a.sendText('B', 'queued hello');
+    expect(ok, isTrue);
+    expect(a.conversation('B').single.status, MessageStatus.sending); // queued
 
+    // The peer becomes reachable → the queued message is delivered on its own.
+    wire(a, 'B', b);
     await _waitFor(
-        () => a.conversation('GHOST').single.status == MessageStatus.failed);
+        () => a.conversation('B').single.status == MessageStatus.delivered);
+    await _waitFor(() =>
+        b.conversation('A').any((m) => m.text == 'queued hello' && !m.mine));
   });
 
   test('received and legacy messages count as delivered', () async {
@@ -147,6 +160,12 @@ void main() {
     expect(legacy.status, MessageStatus.delivered);
   });
 }
+
+// A unique, valid discovery port per controller. The random base differs per
+// test isolate, and the counter keeps siblings apart, so no two controllers
+// ever share a port (and thus never auto-discover one another).
+int _portSeq = 30000 + Random().nextInt(20000);
+int _isolatedPort() => _portSeq++;
 
 Future<void> _waitFor(bool Function() cond,
     {Duration timeout = const Duration(seconds: 8)}) async {
