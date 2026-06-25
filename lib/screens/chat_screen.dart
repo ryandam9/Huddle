@@ -375,6 +375,9 @@ class _StatusTick extends StatelessWidget {
       case MessageStatus.delivered:
         return Icon(Icons.done_all,
             size: 13, color: tint.withValues(alpha: 0.9));
+      case MessageStatus.read:
+        // A distinct accent for "seen", à la the familiar blue double-check.
+        return const Icon(Icons.done_all, size: 13, color: Color(0xFF7FD1FF));
       case MessageStatus.failed:
         final icon = Icon(Icons.error_outline,
             size: 13, color: Theme.of(context).colorScheme.error);
