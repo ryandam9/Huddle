@@ -152,9 +152,11 @@ class HuddleController extends ChangeNotifier {
   /// used to verify the code the other device echoes back.
   final Map<String, String> _pendingCodes = {};
 
-  /// Reliable sends awaiting an `ack`, keyed by message id. The completer is
-  /// resolved when the matching acknowledgement arrives.
-  final Map<String, Completer<void>> _pendingAcks = {};
+  /// Reliable sends awaiting an `ack`, keyed by message id. Records the peer the
+  /// message was sent to so a stray/spoofed ack from another device can't
+  /// complete it. The completer resolves when the matching ack arrives.
+  final Map<String, ({String peerId, Completer<void> completer})> _pendingAcks =
+      {};
 
   /// How long a reliable send waits for an `ack` before resending.
   @visibleForTesting
@@ -168,8 +170,9 @@ class HuddleController extends ChangeNotifier {
   /// double-sends something that's already in flight.
   final Set<String> _inFlight = {};
 
-  /// Guards the background resume drain so only one runs per turn.
-  bool _flushing = false;
+  /// Peers whose resume drain is currently running. Per-peer (not a single
+  /// global flag) so a drain for one peer never blocks another's.
+  final Set<String> _flushingPeers = {};
 
   /// Set by the UI to prompt the user when another device requests pairing.
   /// Should return the code the user typed in, or null if they declined.
@@ -450,12 +453,11 @@ class HuddleController extends ChangeNotifier {
   /// within [ackTimeout]. Returns true once acknowledged, false if every
   /// attempt is exhausted. Used for background batches where silent loss
   /// would be worst (the user isn't watching each file).
-  Future<bool> _sendReliably(
-      String host, int port, String type, Map<String, dynamic> data,
-      String mid) async {
+  Future<bool> _sendReliably(String peerId, String host, int port, String type,
+      Map<String, dynamic> data, String mid) async {
     for (var attempt = 0; attempt < maxSendAttempts; attempt++) {
       final completer = Completer<void>();
-      _pendingAcks[mid] = completer;
+      _pendingAcks[mid] = (peerId: peerId, completer: completer);
       final flushed = await _send(host, port, type, data);
       if (flushed) {
         try {
@@ -510,11 +512,6 @@ class HuddleController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Sends a text message. It's stored and shown immediately (optimistically)
-  /// with a `sending` status, then delivered in the background with
-  /// acknowledgement + retry — its status advances to `delivered` once the peer
-  /// confirms receipt, or `failed` if it can't be reached. Returns true if the
-  /// message was accepted (paired and non-empty).
   /// Sends a text message. It's stored and shown immediately (optimistically)
   /// with a `sending` status, then delivered in the background with
   /// acknowledgement + retry. While the peer is unreachable the message stays
@@ -585,12 +582,11 @@ class HuddleController extends ChangeNotifier {
   void _flushPending(String peerId) {
     final t = _transfer;
     if (t != null && t.peerId == peerId && !t.isComplete) return; // batch owns it
-    if (_flushing) return;
+    if (!_flushingPeers.add(peerId)) return; // a drain for this peer is running
     unawaited(_drainPending(peerId));
   }
 
   Future<void> _drainPending(String peerId) async {
-    _flushing = true;
     try {
       while (true) {
         final next = _nextPending(peerId);
@@ -599,7 +595,9 @@ class HuddleController extends ChangeNotifier {
         if (result == null) break; // peer unreachable now — retry on its return
       }
     } finally {
-      _flushing = false;
+      // Cleared here (not via whenComplete) so a no-op drain releases the peer
+      // synchronously — otherwise a send right after a beacon would be skipped.
+      _flushingPeers.remove(peerId);
     }
   }
 
@@ -666,8 +664,8 @@ class HuddleController extends ChangeNotifier {
       }
       final type =
           message.kind == MessageKind.photo ? FrameType.photo : FrameType.text;
-      final ok =
-          await _sendReliably(device.host, device.port, type, data, message.id);
+      final ok = await _sendReliably(
+          peerId, device.host, device.port, type, data, message.id);
       _setMessageStatus(peerId, message.id,
           ok ? MessageStatus.delivered : MessageStatus.failed);
       return ok;
@@ -701,7 +699,14 @@ class HuddleController extends ChangeNotifier {
   /// is published via [transfer] for the UI to observe. Successive calls are
   /// queued so two batches never interleave their frames on the wire.
   Future<void> sendPhotos(String peerId, List<String> paths) {
-    _transferChain = _transferChain.then((_) => _runBatch(peerId, paths));
+    _transferChain = _transferChain
+        .then((_) => _runBatch(peerId, paths))
+        .catchError((Object e) {
+      // Never let one failed batch poison the chain for every future send.
+      debugPrint('Huddle: batch send failed: $e');
+      _transfer = null;
+      notifyListeners();
+    });
     return _transferChain;
   }
 
@@ -859,11 +864,16 @@ class HuddleController extends ChangeNotifier {
   }
 
   /// A reliable send was confirmed received — resolve its pending completer so
-  /// the sender stops retrying. Unknown/duplicate acks are harmless no-ops.
+  /// the sender stops retrying. The ack must come from the peer the message was
+  /// actually sent to, so a stray or spoofed ack from another device can't mark
+  /// it delivered. Unknown acks are harmless no-ops.
   void _onAck(IncomingFrame frame) {
     final mid = frame.data['mid'] as String?;
     if (mid == null) return;
-    _pendingAcks.remove(mid)?.complete();
+    final pending = _pendingAcks[mid];
+    if (pending == null || pending.peerId != frame.from.id) return;
+    _pendingAcks.remove(mid);
+    pending.completer.complete();
   }
 
   /// Step 2 (receiver): prompt the user to type the code shown on the
@@ -1036,8 +1046,14 @@ class HuddleController extends ChangeNotifier {
 
   void _onUnpair(Endpoint from) {
     if (!isPaired(from.id)) return;
+    // Mirror local unpair cleanup so the peer ending the huddle doesn't leave
+    // stale history, unread counts, or read-receipt tracking behind.
     _peers.remove(from.id);
+    _conversations.remove(from.id);
+    _unread.remove(from.id);
+    _unackedReceived.remove(from.id);
     _storage.savePeers(_peers.values.toList());
+    _storage.deleteConversation(from.id);
     notifyListeners();
   }
 

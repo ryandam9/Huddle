@@ -85,6 +85,22 @@ class Endpoint {
     );
   }
 
+  /// Defensive decode for data off the wire: returns null instead of throwing
+  /// when `id` is missing/not a string, so a malformed packet can't crash the
+  /// socket listeners. Optional fields fall back to sensible defaults.
+  static Endpoint? tryFromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    if (id is! String || id.isEmpty) return null;
+    final port = json['port'];
+    return Endpoint(
+      id: id,
+      name: json['name'] is String ? json['name'] as String : 'Unknown',
+      platform:
+          json['platform'] is String ? json['platform'] as String : 'unknown',
+      port: port is int ? port : 0,
+    );
+  }
+
   Endpoint withHost(String host) => Endpoint(
         id: id,
         name: name,

@@ -28,6 +28,12 @@ class TransportService {
   /// Invoked for every decoded inbound frame.
   void Function(IncomingFrame frame)? onFrame;
 
+  /// Hard ceiling on a single unterminated inbound frame. Bounds the receive
+  /// buffer so a peer can't exhaust memory by streaming without a newline; it
+  /// also caps the (whole-file) photo frame until a chunked transfer replaces
+  /// it. Mutable for tests.
+  int maxFrameBytes = 64 * 1024 * 1024;
+
   ServerSocket? _server;
 
   int get port => _server?.port ?? 0;
@@ -49,6 +55,9 @@ class TransportService {
       (chunk) {
         buffer.write(chunk);
         _drainLines(buffer, remoteHost);
+        // After draining complete frames, an oversized leftover means a single
+        // frame is too large (or an endless stream) — drop the connection.
+        if (buffer.length > maxFrameBytes) socket.destroy();
       },
       onError: (_) => socket.destroy(),
       onDone: () {
@@ -94,7 +103,9 @@ class TransportService {
     final fromJson = json['from'];
     if (type == null || fromJson is! Map<String, dynamic>) return;
 
-    final from = Endpoint.fromJson(fromJson).withHost(remoteHost);
+    final endpoint = Endpoint.tryFromJson(fromJson);
+    if (endpoint == null) return; // malformed sender — ignore, keep the socket
+    final from = endpoint.withHost(remoteHost);
     onFrame?.call(IncomingFrame(type: type, from: from, data: json));
   }
 
