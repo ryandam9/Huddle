@@ -142,6 +142,18 @@ class HuddleController extends ChangeNotifier {
   /// used to verify the code the other device echoes back.
   final Map<String, String> _pendingCodes = {};
 
+  /// Reliable sends awaiting an `ack`, keyed by message id. The completer is
+  /// resolved when the matching acknowledgement arrives.
+  final Map<String, Completer<void>> _pendingAcks = {};
+
+  /// How long a reliable send waits for an `ack` before resending.
+  @visibleForTesting
+  Duration ackTimeout = const Duration(seconds: 4);
+
+  /// How many times a reliable send is attempted before giving up.
+  @visibleForTesting
+  int maxSendAttempts = 3;
+
   /// Set by the UI to prompt the user when another device requests pairing.
   /// Should return the code the user typed in, or null if they declined.
   Future<String?> Function(Endpoint from)? onPairRequest;
@@ -413,6 +425,38 @@ class HuddleController extends ChangeNotifier {
           String host, int port, String type, Map<String, dynamic> data) =>
       _transport?.send(host, port, type, data) ?? Future.value(false);
 
+  /// Sends a frame and waits for the receiver's `ack` (keyed by [mid]),
+  /// resending up to [maxSendAttempts] times if no acknowledgement arrives
+  /// within [ackTimeout]. Returns true once acknowledged, false if every
+  /// attempt is exhausted. Used for background batches where silent loss
+  /// would be worst (the user isn't watching each file).
+  Future<bool> _sendReliably(
+      String host, int port, String type, Map<String, dynamic> data,
+      String mid) async {
+    for (var attempt = 0; attempt < maxSendAttempts; attempt++) {
+      final completer = Completer<void>();
+      _pendingAcks[mid] = completer;
+      final flushed = await _send(host, port, type, data);
+      if (flushed) {
+        try {
+          await completer.future.timeout(ackTimeout);
+          _pendingAcks.remove(mid);
+          return true;
+        } on TimeoutException {
+          // No acknowledgement in time — fall through and resend.
+        }
+      }
+      _pendingAcks.remove(mid);
+    }
+    return false;
+  }
+
+  /// Confirms receipt of [mid] back to [to] so a reliable sender stops
+  /// retrying. Fire-and-forget; the sender tolerates a lost ack by resending.
+  void _ackTo(Endpoint to, String mid) {
+    _send(to.host, to.port, FrameType.ack, {'mid': mid});
+  }
+
   /// Initiates a pairing agreement with [device]. Generates a one-time code,
   /// surfaces it via [outgoingPairing] for the UI to display, and sends the
   /// request. The other device's user must type this code to complete the
@@ -470,7 +514,16 @@ class HuddleController extends ChangeNotifier {
     });
   }
 
-  Future<bool> sendPhoto(String peerId, String sourcePath) async {
+  /// Sends a single photo. Interactive (fire-once): the local copy is stored
+  /// and shown immediately, and the return value reflects whether the frame
+  /// was flushed to the peer.
+  Future<bool> sendPhoto(String peerId, String sourcePath) =>
+      _deliverPhoto(peerId, sourcePath, reliable: false);
+
+  /// Shared photo-send path. When [reliable] is true the frame is retried until
+  /// the peer acknowledges it (used by batch sends); otherwise it's sent once.
+  Future<bool> _deliverPhoto(String peerId, String sourcePath,
+      {required bool reliable}) async {
     if (!isPaired(peerId)) return false;
 
     final file = File(sourcePath);
@@ -483,26 +536,32 @@ class HuddleController extends ChangeNotifier {
     final storedPath = await _storage.saveIncomingPhoto(name, bytes);
 
     final mid = _uuid.v4();
-    final message = ChatMessage(
-      id: mid,
-      peerId: peerId,
-      mine: true,
-      kind: MessageKind.photo,
-      sentAt: DateTime.now(),
-      filePath: storedPath,
-      fileName: name,
+    final now = DateTime.now();
+    _appendMessage(
+      peerId,
+      ChatMessage(
+        id: mid,
+        peerId: peerId,
+        mine: true,
+        kind: MessageKind.photo,
+        sentAt: now,
+        filePath: storedPath,
+        fileName: name,
+      ),
     );
-    _appendMessage(peerId, message);
 
     final device = _devices[peerId];
     if (device == null) return false;
-    return _send(device.host, device.port, FrameType.photo, {
+    final data = <String, dynamic>{
       'mid': mid,
       'name': name,
       'mime': mime,
       'data': base64Encode(bytes),
-      'ts': message.sentAt.millisecondsSinceEpoch,
-    });
+      'ts': now.millisecondsSinceEpoch,
+    };
+    return reliable
+        ? _sendReliably(device.host, device.port, FrameType.photo, data, mid)
+        : _send(device.host, device.port, FrameType.photo, data);
   }
 
   /// Sends every photo in [paths] to [peerId], one after another, in the
@@ -523,7 +582,9 @@ class HuddleController extends ChangeNotifier {
     notifyListeners();
 
     for (final path in items) {
-      final ok = await sendPhoto(peerId, path);
+      // Reliable: each file is retried until the peer acknowledges it, so a
+      // background batch doesn't silently drop files.
+      final ok = await _deliverPhoto(peerId, path, reliable: true);
       _transfer = _transfer!._advance(ok: ok);
       notifyListeners();
     }
@@ -575,7 +636,18 @@ class HuddleController extends ChangeNotifier {
       case FrameType.unpair:
         _onUnpair(frame.from);
         break;
+      case FrameType.ack:
+        _onAck(frame);
+        break;
     }
+  }
+
+  /// A reliable send was confirmed received — resolve its pending completer so
+  /// the sender stops retrying. Unknown/duplicate acks are harmless no-ops.
+  void _onAck(IncomingFrame frame) {
+    final mid = frame.data['mid'] as String?;
+    if (mid == null) return;
+    _pendingAcks.remove(mid)?.complete();
   }
 
   /// Step 2 (receiver): prompt the user to type the code shown on the
@@ -673,7 +745,12 @@ class HuddleController extends ChangeNotifier {
     final data = frame.data['data'] as String?;
     if (data == null) return;
     final mid = (frame.data['mid'] as String?) ?? _uuid.v4();
-    if (_isDuplicate(frame.from.id, mid)) return;
+    if (_isDuplicate(frame.from.id, mid)) {
+      // Already stored (a retry whose earlier ack was lost) — re-confirm so the
+      // sender stops resending, but don't store or notify twice.
+      _ackTo(frame.from, mid);
+      return;
+    }
 
     final name = (frame.data['name'] as String?) ?? 'photo';
     List<int> bytes;
@@ -697,6 +774,7 @@ class HuddleController extends ChangeNotifier {
       ),
       bumpUnread: true,
     );
+    _ackTo(frame.from, mid); // confirm receipt for reliable senders
     _tick(); // felt a new photo arrive
     _notifyPhotoReceived(frame.from.name);
   }

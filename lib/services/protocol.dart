@@ -14,7 +14,9 @@ const String kAppTag = 'huddle';
 ///
 /// v2 introduced the pairing-code handshake (`pair_confirm` + a `code` carried
 /// on `pair_response`).
-const int kProtocolVersion = 2;
+/// v3 added the `ack` frame so a sender can confirm delivery and retry — older
+/// peers simply ignore unknown frames, so this stays backward tolerant.
+const int kProtocolVersion = 3;
 
 /// UDP port used for presence beacons. Fixed so every device listens on the
 /// same port.
@@ -43,6 +45,10 @@ class FrameType {
   static const String text = 'text';
   static const String photo = 'photo';
   static const String unpair = 'unpair';
+
+  /// Sent back by the receiver to confirm it stored a frame (carries the
+  /// original `mid`), so a reliable sender knows to stop retrying.
+  static const String ack = 'ack';
 }
 
 /// Identifies the sender of a frame and how to reach it for a reply.
