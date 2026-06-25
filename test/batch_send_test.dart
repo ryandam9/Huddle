@@ -146,6 +146,26 @@ void main() {
     expect(a.conversation('stranger'), isEmpty);
   });
 
+  test('sendPhoto to an offline paired peer queues it and returns true',
+      () async {
+    // Paired, but never wired → unreachable. A queued send is a success, not a
+    // failure: it returns true and the message simply waits as `sending`.
+    final a = await start('AAAA', 'Device A', pairedId: 'GHOST');
+
+    final ok = await a.sendPhoto('GHOST', makePhotos(1).single);
+
+    expect(ok, isTrue);
+    final photo = a.conversation('GHOST').single;
+    expect(photo.kind, MessageKind.photo);
+    expect(photo.status, MessageStatus.sending); // queued for later delivery
+  });
+
+  test('sendPhoto to an unpaired id is rejected and stores nothing', () async {
+    final a = await start('AAAA', 'Device A'); // no peers
+    expect(await a.sendPhoto('nobody', makePhotos(1).single), isFalse);
+    expect(a.conversation('nobody'), isEmpty);
+  });
+
   test('successive batches are serialised and all files arrive', () async {
     final a =
         await start('AAAA', 'Device A', pairedId: 'BBBB', pairedName: 'Device B');
