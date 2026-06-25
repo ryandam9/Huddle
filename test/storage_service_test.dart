@@ -1,6 +1,7 @@
 // Tests for the persistence layer that is backed purely by SharedPreferences
-// (peers and conversation history). The photo-on-disk path uses path_provider
-// and is exercised by integration testing rather than here.
+// (peers and network/download settings). Conversation history now lives in the
+// database and is covered by message_store_test. The photo-on-disk path uses
+// path_provider and is exercised by integration testing rather than here.
 
 import 'dart:io';
 
@@ -8,7 +9,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:huddle/models/chat_message.dart';
 import 'package:huddle/models/peer.dart';
 import 'package:huddle/services/protocol.dart';
 import 'package:huddle/services/storage_service.dart';
@@ -46,57 +46,6 @@ void main() {
       final loaded = storage.loadPeers();
       expect(loaded.map((p) => p.id), ['p1', 'p2']);
       expect(loaded.map((p) => p.name), ['Laptop', 'Phone']);
-    });
-  });
-
-  group('conversations', () {
-    test('start empty', () {
-      expect(storage.loadMessages('p1'), isEmpty);
-    });
-
-    test('persist, reload and delete', () async {
-      final messages = [
-        ChatMessage(
-          id: 'm1',
-          peerId: 'p1',
-          mine: true,
-          kind: MessageKind.text,
-          sentAt: DateTime.fromMillisecondsSinceEpoch(10),
-          text: 'hi',
-        ),
-        ChatMessage(
-          id: 'm2',
-          peerId: 'p1',
-          mine: false,
-          kind: MessageKind.text,
-          sentAt: DateTime.fromMillisecondsSinceEpoch(20),
-          text: 'hello',
-        ),
-      ];
-      await storage.saveMessages('p1', messages);
-
-      final loaded = storage.loadMessages('p1');
-      expect(loaded.length, 2);
-      expect(loaded.first.text, 'hi');
-      expect(loaded.last.mine, isFalse);
-
-      await storage.deleteConversation('p1');
-      expect(storage.loadMessages('p1'), isEmpty);
-    });
-
-    test('conversations are isolated per peer', () async {
-      await storage.saveMessages('p1', [
-        ChatMessage(
-          id: 'm1',
-          peerId: 'p1',
-          mine: true,
-          kind: MessageKind.text,
-          sentAt: DateTime.fromMillisecondsSinceEpoch(1),
-          text: 'for p1',
-        ),
-      ]);
-      expect(storage.loadMessages('p1'), hasLength(1));
-      expect(storage.loadMessages('p2'), isEmpty);
     });
   });
 

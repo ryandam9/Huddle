@@ -44,6 +44,12 @@ dependencies:
   # Resolving the directory used to store received photos.
   path_provider: ^2.1.5
 
+  # Local database for conversation history — one record per message, indexed
+  # by peer, with targeted status updates (replacing the rewrite-the-whole-
+  # conversation-on-every-change shared_preferences approach). Pure Dart: no
+  # native libraries or code generation, so it runs identically under tests.
+  sembast: ^3.7.0
+
   # Native folder picker for choosing a download location on desktop. Going
   # through the OS picker is also what grants a sandboxed macOS build write
   # access to a folder outside its container.

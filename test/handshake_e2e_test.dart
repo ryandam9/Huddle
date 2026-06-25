@@ -7,6 +7,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart' as sembast;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:huddle/models/chat_message.dart';
@@ -37,7 +38,7 @@ void main() {
       'huddle.identity.name': name,
       'huddle.identity.platform': 'linux',
     });
-    final c = HuddleController();
+    final c = HuddleController(databaseFactory: sembast.newDatabaseFactoryMemory());
     await c.init();
     controllers.add(c);
     return c;

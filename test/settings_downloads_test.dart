@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:sembast/sembast_memory.dart' as sembast;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:huddle/screens/settings_screen.dart';
@@ -27,7 +28,7 @@ void main() {
 
   Future<HuddleController> startWith(String downloadDir) async {
     SharedPreferences.setMockInitialValues({'huddle.media.dir': downloadDir});
-    final c = HuddleController();
+    final c = HuddleController(databaseFactory: sembast.newDatabaseFactoryMemory());
     await c.init();
     return c;
   }

@@ -4,6 +4,9 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:sembast/sembast_io.dart';
+import 'package:sembast/sembast_memory.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
@@ -13,6 +16,7 @@ import '../models/peer.dart';
 import '../services/discovery_service.dart';
 import '../services/foreground_service.dart';
 import '../services/identity.dart';
+import '../services/message_store.dart';
 import '../services/pairing.dart';
 import '../services/protocol.dart';
 import '../services/storage_service.dart';
@@ -91,15 +95,22 @@ class TransferProgress {
 /// Owns discovery, transport, identity, persistence and the in-memory view of
 /// devices, peers and conversations. The UI observes this via [ChangeNotifier].
 class HuddleController extends ChangeNotifier {
-  HuddleController({ForegroundService? foreground})
+  HuddleController({ForegroundService? foreground, this.databaseFactory})
       : _foreground = foreground ?? AndroidForegroundService();
 
   /// Keeps the process alive during a batch so it can finish in the background
   /// (Android only; a no-op elsewhere). Injectable for tests.
   final ForegroundService _foreground;
 
+  /// Database factory for the message store; null uses the on-disk default.
+  /// Tests inject an in-memory factory.
+  @visibleForTesting
+  final DatabaseFactory? databaseFactory;
+
   late final SharedPreferences _prefs;
   late final StorageService _storage;
+  Database? _db;
+  late final MessageStore _messages;
   late final Identity identity;
 
   DiscoveryService? _discovery;
@@ -173,6 +184,11 @@ class HuddleController extends ChangeNotifier {
   /// Peers whose resume drain is currently running. Per-peer (not a single
   /// global flag) so a drain for one peer never blocks another's.
   final Set<String> _flushingPeers = {};
+
+  /// Peers for which a flush was requested while a drain was already running, so
+  /// the drain re-runs once it finishes — closing a lost-wakeup window when a
+  /// peer becomes reachable mid-drain.
+  final Set<String> _flushAgain = {};
 
   /// Set by the UI to prompt the user when another device requests pairing.
   /// Should return the code the user typed in, or null if they declined.
@@ -252,10 +268,17 @@ class HuddleController extends ChangeNotifier {
     _storage = StorageService(_prefs);
     identity = await Identity.loadOrCreate(_prefs);
 
+    await _openMessageStore();
+
     for (final peer in _storage.loadPeers()) {
       _peers[peer.id] = peer;
-      _conversations[peer.id] = _storage.loadMessages(peer.id);
+      _conversations[peer.id] = await _messages.messagesFor(peer.id);
     }
+    // Restore unread counts and pending read-receipt ids.
+    (await _messages.loadMeta()).forEach((peerId, m) {
+      if (m.unread > 0) _unread[peerId] = m.unread;
+      if (m.unacked.isNotEmpty) _unackedReceived[peerId] = List.of(m.unacked);
+    });
 
     _discoveryPort = _storage.loadDiscoveryPort();
     _customBroadcast = _storage.loadCustomBroadcast();
@@ -299,6 +322,29 @@ class HuddleController extends ChangeNotifier {
 
     ready = true;
     notifyListeners();
+  }
+
+  /// Opens the conversation database and runs the one-time import from the old
+  /// `shared_preferences` format. Tests inject an in-memory [DatabaseFactory];
+  /// production stores a file in the app documents directory. If no writable
+  /// location is available (an unsupported platform, or a restricted test host
+  /// with no path_provider) it falls back to an in-memory store so history
+  /// still works for the session rather than crashing startup.
+  Future<void> _openMessageStore() async {
+    final injected = databaseFactory;
+    if (injected != null) {
+      _db = await injected.openDatabase('huddle.db');
+    } else {
+      try {
+        final dir = await getApplicationDocumentsDirectory();
+        _db = await databaseFactoryIo.openDatabase('${dir.path}/huddle.db');
+      } catch (e) {
+        debugPrint('Huddle: on-disk message store unavailable, using memory: $e');
+        _db = await newDatabaseFactoryMemory().openDatabase('huddle.db');
+      }
+    }
+    _messages = MessageStore(_db!);
+    await _messages.migrateFromPrefs(_prefs);
   }
 
   Future<void> _loadNetworkInfo() async {
@@ -543,7 +589,7 @@ class HuddleController extends ChangeNotifier {
     final trimmed = text.trim();
     if (trimmed.isEmpty || !isPaired(peerId)) return false;
 
-    _appendMessage(
+    await _appendMessage(
       peerId,
       ChatMessage(
         id: _uuid.v4(),
@@ -561,15 +607,16 @@ class HuddleController extends ChangeNotifier {
 
   /// Advances the delivery [status] of message [mid] in [peerId]'s conversation
   /// (e.g. when its acknowledgement arrives) and persists the change.
-  void _setMessageStatus(String peerId, String mid, MessageStatus status) {
+  Future<void> _setMessageStatus(
+      String peerId, String mid, MessageStatus status) async {
     final list = _conversations[peerId];
     if (list == null) return;
     for (final m in list) {
       if (m.id == mid) {
         if (m.status != status) {
           m.status = status;
-          _storage.saveMessages(peerId, list);
           notifyListeners();
+          await _messages.updateStatus(mid, status);
         }
         return;
       }
@@ -587,7 +634,7 @@ class HuddleController extends ChangeNotifier {
       if (m.id == mid) {
         if (!m.mine || m.status != MessageStatus.failed) return false;
         m.status = MessageStatus.sending;
-        _storage.saveMessages(peerId, list);
+        unawaited(_messages.updateStatus(mid, MessageStatus.sending));
         notifyListeners();
         _flushPending(peerId);
         return true;
@@ -603,7 +650,14 @@ class HuddleController extends ChangeNotifier {
   void _flushPending(String peerId) {
     final t = _transfer;
     if (t != null && t.peerId == peerId && !t.isComplete) return; // batch owns it
-    if (!_flushingPeers.add(peerId)) return; // a drain for this peer is running
+    if (_flushingPeers.contains(peerId)) {
+      // A drain is already running. Note that another pass is wanted: the peer
+      // may have become reachable (this very request) just as a device-less
+      // pass was giving up, and we must not lose that wakeup.
+      _flushAgain.add(peerId);
+      return;
+    }
+    _flushingPeers.add(peerId);
     unawaited(_drainPending(peerId));
   }
 
@@ -616,10 +670,12 @@ class HuddleController extends ChangeNotifier {
         if (result == null) break; // peer unreachable now — retry on its return
       }
     } finally {
-      // Cleared here (not via whenComplete) so a no-op drain releases the peer
-      // synchronously — otherwise a send right after a beacon would be skipped.
       _flushingPeers.remove(peerId);
     }
+    // If a flush was requested mid-drain (e.g. the peer appeared just as a
+    // device-less pass was giving up), run another pass now that the guard is
+    // released so the request isn't lost.
+    if (_flushAgain.remove(peerId)) _flushPending(peerId);
   }
 
   ChatMessage? _nextPending(String peerId) {
@@ -661,7 +717,7 @@ class HuddleController extends ChangeNotifier {
       fileName: name,
       status: MessageStatus.sending,
     );
-    _appendMessage(peerId, message);
+    await _appendMessage(peerId, message);
     return message;
   }
 
@@ -680,14 +736,14 @@ class HuddleController extends ChangeNotifier {
     try {
       final data = await _frameFor(message);
       if (data == null) {
-        _setMessageStatus(peerId, message.id, MessageStatus.failed);
+        await _setMessageStatus(peerId, message.id, MessageStatus.failed);
         return false;
       }
       final type =
           message.kind == MessageKind.photo ? FrameType.photo : FrameType.text;
       final ok = await _sendReliably(
           peerId, device.host, device.port, type, data, message.id);
-      _setMessageStatus(peerId, message.id,
+      await _setMessageStatus(peerId, message.id,
           ok ? MessageStatus.delivered : MessageStatus.failed);
       return ok;
     } finally {
@@ -781,7 +837,7 @@ class HuddleController extends ChangeNotifier {
     _unread.remove(peerId);
     _unackedReceived.remove(peerId);
     await _storage.savePeers(_peers.values.toList());
-    await _storage.deleteConversation(peerId);
+    await _messages.deleteConversation(peerId);
     notifyListeners();
   }
 
@@ -791,7 +847,7 @@ class HuddleController extends ChangeNotifier {
     _conversations[peerId] = [];
     _unread.remove(peerId);
     _unackedReceived.remove(peerId);
-    await _storage.deleteConversation(peerId);
+    await _messages.deleteConversation(peerId);
     notifyListeners();
   }
 
@@ -803,35 +859,39 @@ class HuddleController extends ChangeNotifier {
     final before = list.length;
     list.removeWhere((m) => m.id == mid);
     if (list.length == before) return false;
-    await _storage.saveMessages(peerId, list);
+    await _messages.deleteMessage(mid);
     notifyListeners();
     return true;
   }
 
   void markRead(String peerId) {
-    _sendReadReceipt(peerId);
-    if ((_unread[peerId] ?? 0) != 0) {
-      _unread[peerId] = 0;
+    final clearedReceipts = _sendReadReceipt(peerId);
+    final hadUnread = (_unread[peerId] ?? 0) != 0;
+    if (hadUnread) _unread[peerId] = 0;
+    if (clearedReceipts || hadUnread) {
+      unawaited(_persistMeta(peerId));
       notifyListeners();
     }
   }
 
   /// Tells [peerId] which of its messages we've now read, so it can show read
   /// receipts. Best-effort: if the peer is unreachable the ids are kept and
-  /// retried the next time the conversation is marked read.
-  void _sendReadReceipt(String peerId) {
+  /// retried the next time the conversation is marked read. Returns true if the
+  /// pending ids were sent and cleared (so the caller persists the change).
+  bool _sendReadReceipt(String peerId) {
     final mids = _unackedReceived[peerId];
-    if (mids == null || mids.isEmpty) return;
+    if (mids == null || mids.isEmpty) return false;
     final device = _devices[peerId];
-    if (device == null) return; // offline — keep the ids for next time
+    if (device == null) return false; // offline — keep the ids for next time
     _send(device.host, device.port, FrameType.read, {'mids': List.of(mids)});
     _unackedReceived.remove(peerId);
+    return true;
   }
 
   /// A peer reported reading our messages — upgrade their delivery status to
   /// `read`. A receipt is the strongest confirmation of receipt, so it's
   /// accepted regardless of what we currently believe.
-  void _onRead(IncomingFrame frame) {
+  Future<void> _onRead(IncomingFrame frame) async {
     final mids = (frame.data['mids'] as List?)?.cast<String>();
     if (mids == null || mids.isEmpty) return;
     final list = _conversations[frame.from.id];
@@ -841,13 +901,11 @@ class HuddleController extends ChangeNotifier {
     for (final m in list) {
       if (m.mine && m.status != MessageStatus.read && readMids.contains(m.id)) {
         m.status = MessageStatus.read;
+        await _messages.updateStatus(m.id, MessageStatus.read);
         changed = true;
       }
     }
-    if (changed) {
-      _storage.saveMessages(frame.from.id, list);
-      notifyListeners();
-    }
+    if (changed) notifyListeners();
   }
 
   // --- Inbound frames ------------------------------------------------------
@@ -867,7 +925,7 @@ class HuddleController extends ChangeNotifier {
         _onPairConfirm(frame);
         break;
       case FrameType.text:
-        _onText(frame);
+        await _onText(frame);
         break;
       case FrameType.photo:
         await _onPhoto(frame);
@@ -879,7 +937,7 @@ class HuddleController extends ChangeNotifier {
         _onAck(frame);
         break;
       case FrameType.read:
-        _onRead(frame);
+        await _onRead(frame);
         break;
     }
   }
@@ -964,7 +1022,7 @@ class HuddleController extends ChangeNotifier {
     HapticFeedback.lightImpact().catchError((_) {});
   }
 
-  void _onText(IncomingFrame frame) {
+  Future<void> _onText(IncomingFrame frame) async {
     if (!isPaired(frame.from.id)) return; // No agreement → ignore.
     final text = frame.data['text'] as String?;
     if (text == null) return;
@@ -974,7 +1032,7 @@ class HuddleController extends ChangeNotifier {
       return;
     }
 
-    _appendMessage(
+    await _appendMessage(
       frame.from.id,
       ChatMessage(
         id: mid,
@@ -987,6 +1045,7 @@ class HuddleController extends ChangeNotifier {
       bumpUnread: true,
     );
     _recordReceived(frame.from.id, mid);
+    await _persistMeta(frame.from.id);
     _ackTo(frame.from, mid); // confirm receipt for the reliable sender
     _tick(); // felt a new message arrive
     _notifyReceived('New message from ${frame.from.name}');
@@ -1013,7 +1072,7 @@ class HuddleController extends ChangeNotifier {
     }
     final path = await _storage.saveIncomingPhoto(name, bytes);
 
-    _appendMessage(
+    await _appendMessage(
       frame.from.id,
       ChatMessage(
         id: mid,
@@ -1027,6 +1086,7 @@ class HuddleController extends ChangeNotifier {
       bumpUnread: true,
     );
     _recordReceived(frame.from.id, mid);
+    await _persistMeta(frame.from.id);
     _ackTo(frame.from, mid); // confirm receipt for reliable senders
     _tick(); // felt a new photo arrive
     _notifyPhotoReceived(frame.from.name);
@@ -1036,6 +1096,14 @@ class HuddleController extends ChangeNotifier {
   void _recordReceived(String peerId, String mid) {
     (_unackedReceived[peerId] ??= <String>[]).add(mid);
   }
+
+  /// Persists the per-peer unread count and pending read-receipt ids so they
+  /// survive a restart.
+  Future<void> _persistMeta(String peerId) => _messages.saveMeta(
+        peerId,
+        unread: _unread[peerId] ?? 0,
+        unacked: _unackedReceived[peerId] ?? const [],
+      );
 
   /// Raises a transient in-app notice for received content, when the user has
   /// notifications enabled. Reuses the same channel as pairing notices.
@@ -1074,7 +1142,7 @@ class HuddleController extends ChangeNotifier {
     _unread.remove(from.id);
     _unackedReceived.remove(from.id);
     _storage.savePeers(_peers.values.toList());
-    _storage.deleteConversation(from.id);
+    unawaited(_messages.deleteConversation(from.id));
     notifyListeners();
   }
 
@@ -1091,7 +1159,7 @@ class HuddleController extends ChangeNotifier {
 
     _conversations.putIfAbsent(from.id, () => []);
     if (system != null) {
-      _appendMessage(
+      unawaited(_appendMessage(
         from.id,
         ChatMessage(
           id: _uuid.v4(),
@@ -1101,21 +1169,21 @@ class HuddleController extends ChangeNotifier {
           sentAt: DateTime.now(),
           text: system,
         ),
-      );
+      ));
     } else {
       notifyListeners();
     }
   }
 
-  void _appendMessage(String peerId, ChatMessage message,
-      {bool bumpUnread = false}) {
+  Future<void> _appendMessage(String peerId, ChatMessage message,
+      {bool bumpUnread = false}) async {
     final list = _conversations.putIfAbsent(peerId, () => []);
     list.add(message);
-    _storage.saveMessages(peerId, list);
     if (bumpUnread) {
       _unread[peerId] = (_unread[peerId] ?? 0) + 1;
     }
     notifyListeners();
+    await _messages.append(message);
   }
 
   bool _isDuplicate(String peerId, String mid) {
@@ -1146,6 +1214,12 @@ class HuddleController extends ChangeNotifier {
     _photoNoticeTimer?.cancel();
     _discovery?.dispose();
     _transport?.dispose();
+    // Close only a database we own (the on-disk/fallback store). An injected
+    // factory (tests) is left open so a "restart" controller can reopen it.
+    if (databaseFactory == null) {
+      final db = _db;
+      if (db != null) unawaited(db.close());
+    }
     super.dispose();
   }
 }
