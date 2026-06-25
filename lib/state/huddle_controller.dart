@@ -707,13 +707,21 @@ class HuddleController extends ChangeNotifier {
     return null;
   }
 
-  /// Sends a single photo. Stores it (shown immediately), then delivers
-  /// reliably; returns true once the peer acknowledges receipt.
+  /// Sends a single photo. It's stored and shown immediately (optimistically)
+  /// with a `sending` status, then delivered in the background with
+  /// acknowledgement + retry — staying queued while the peer is unreachable and
+  /// resuming when it reappears, exactly like [sendText].
+  ///
+  /// Returns true once *accepted* (the peer is paired and the source file could
+  /// be read); the message's [MessageStatus] tracks delivery from there. Returns
+  /// false only when it was rejected outright — not paired, or the file is gone
+  /// — so a queued-while-offline send is a success, not a failure.
   Future<bool> sendPhoto(String peerId, String sourcePath) async {
     if (!isPaired(peerId)) return false;
     final message = await _enqueuePhoto(peerId, sourcePath);
     if (message == null) return false;
-    return (await _deliverStored(peerId, message)) ?? false;
+    _flushPending(peerId); // deliver now if reachable, else it stays queued
+    return true;
   }
 
   /// Reads [sourcePath], keeps a durable local copy (so the bubble renders and
