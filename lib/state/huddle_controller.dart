@@ -832,22 +832,25 @@ class HuddleController extends ChangeNotifier {
     if (device != null) {
       await _send(device.host, device.port, FrameType.unpair, const {});
     }
+    final removed = _conversations.remove(peerId) ?? const <ChatMessage>[];
     _peers.remove(peerId);
-    _conversations.remove(peerId);
     _unread.remove(peerId);
     _unackedReceived.remove(peerId);
     await _storage.savePeers(_peers.values.toList());
     await _messages.deleteConversation(peerId);
+    await _deleteMediaFor(removed);
     notifyListeners();
   }
 
   /// Clears the message history with [peerId] while keeping the agreement
   /// (unlike [unpair], which removes the peer entirely).
   Future<void> clearConversation(String peerId) async {
+    final removed = _conversations[peerId] ?? const <ChatMessage>[];
     _conversations[peerId] = [];
     _unread.remove(peerId);
     _unackedReceived.remove(peerId);
     await _messages.deleteConversation(peerId);
+    await _deleteMediaFor(removed);
     notifyListeners();
   }
 
@@ -856,10 +859,11 @@ class HuddleController extends ChangeNotifier {
   Future<bool> deleteMessage(String peerId, String mid) async {
     final list = _conversations[peerId];
     if (list == null) return false;
-    final before = list.length;
-    list.removeWhere((m) => m.id == mid);
-    if (list.length == before) return false;
+    final index = list.indexWhere((m) => m.id == mid);
+    if (index < 0) return false;
+    final removed = list.removeAt(index);
     await _messages.deleteMessage(mid);
+    await _deleteMediaFor([removed]);
     notifyListeners();
     return true;
   }
@@ -1105,6 +1109,19 @@ class HuddleController extends ChangeNotifier {
         unacked: _unackedReceived[peerId] ?? const [],
       );
 
+  /// Deletes the on-disk files backing any photo messages in [messages] that
+  /// Huddle stored in its own media folder, so removing a message or
+  /// conversation doesn't leave orphaned files behind. Files the user
+  /// redirected to a custom folder, or already gone, are left alone.
+  Future<void> _deleteMediaFor(Iterable<ChatMessage> messages) async {
+    for (final m in messages) {
+      final path = m.filePath;
+      if (m.kind == MessageKind.photo && path != null) {
+        await _storage.deleteManagedMedia(path);
+      }
+    }
+  }
+
   /// Raises a transient in-app notice for received content, when the user has
   /// notifications enabled. Reuses the same channel as pairing notices.
   void _notifyReceived(String message) {
@@ -1136,13 +1153,14 @@ class HuddleController extends ChangeNotifier {
   void _onUnpair(Endpoint from) {
     if (!isPaired(from.id)) return;
     // Mirror local unpair cleanup so the peer ending the huddle doesn't leave
-    // stale history, unread counts, or read-receipt tracking behind.
+    // stale history, unread counts, read-receipt tracking, or photo files behind.
+    final removed = _conversations.remove(from.id) ?? const <ChatMessage>[];
     _peers.remove(from.id);
-    _conversations.remove(from.id);
     _unread.remove(from.id);
     _unackedReceived.remove(from.id);
     _storage.savePeers(_peers.values.toList());
     unawaited(_messages.deleteConversation(from.id));
+    unawaited(_deleteMediaFor(removed));
     notifyListeners();
   }
 

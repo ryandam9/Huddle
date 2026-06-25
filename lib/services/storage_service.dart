@@ -143,6 +143,23 @@ class StorageService {
     return _defaultMediaPath();
   }
 
+  /// Deletes a stored media [path] when (and only when) it lives inside the
+  /// app's own default media folder, so removing a message cleans up the copy
+  /// Huddle saved but never reaches into a custom download folder the user
+  /// manages themselves — files they redirected there are considered theirs to
+  /// keep. Best-effort: a missing file or an I/O error is ignored.
+  Future<void> deleteManagedMedia(String path) async {
+    try {
+      final managed = await _defaultMediaPath();
+      // Only inside our own folder — leave the user's chosen folder untouched.
+      if (path != managed && !path.startsWith('$managed/')) return;
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // Cleanup is best-effort and must never surface to the caller.
+    }
+  }
+
   /// The app's own media folder inside its container — always writable, even
   /// under the macOS sandbox, so it doubles as the fallback location.
   Future<String> _defaultMediaPath() async {
