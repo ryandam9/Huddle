@@ -200,16 +200,30 @@ class HuddleController extends ChangeNotifier {
 
   // --- Read-only views -----------------------------------------------------
 
-  List<Device> get devices {
-    final list = _devices.values.toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    return list;
-  }
+  // Sorted snapshots are cached and rebuilt only when observable state changes
+  // (the caches are cleared in [notifyListeners]), so repeated reads from the
+  // UI — including `peers[index]` inside list rows — don't re-allocate and
+  // re-sort the whole list every time (finding #34).
+  List<Device>? _devicesCache;
+  List<Peer>? _peersCache;
 
-  List<Peer> get peers {
-    final list = _peers.values.toList()
-      ..sort((a, b) => b.pairedAt.compareTo(a.pairedAt));
-    return list;
+  List<Device> get devices => _devicesCache ??= List.unmodifiable(
+        _devices.values.toList()
+          ..sort(
+              (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())),
+      );
+
+  List<Peer> get peers => _peersCache ??= List.unmodifiable(
+        _peers.values.toList()..sort((a, b) => b.pairedAt.compareTo(a.pairedAt)),
+      );
+
+  @override
+  void notifyListeners() {
+    // Anything worth a notification may reorder these, so drop the cached
+    // snapshots and let the next read rebuild them lazily.
+    _devicesCache = null;
+    _peersCache = null;
+    super.notifyListeners();
   }
 
   bool isPaired(String id) => _peers.containsKey(id);

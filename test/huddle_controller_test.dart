@@ -182,6 +182,25 @@ void main() {
     expect(c.isOnline('d1'), isTrue);
   });
 
+  test('devices/peers lists are cached and rebuilt only on change', () async {
+    final c = await start();
+
+    final before = c.devices;
+    expect(identical(c.devices, before), isTrue); // repeated reads reuse it
+
+    c.ingestBeacon('192.168.1.5',
+        Endpoint(id: 'd1', name: 'Tablet', platform: 'android', port: 5001));
+    expect(identical(c.devices, before), isFalse); // rebuilt after a change
+  });
+
+  test('the devices list is an unmodifiable snapshot', () async {
+    final c = await start();
+    c.ingestBeacon('192.168.1.5',
+        Endpoint(id: 'd1', name: 'Tablet', platform: 'android', port: 5001));
+    final list = c.devices;
+    expect(() => list.add(list.first), throwsUnsupportedError);
+  });
+
   test('an unpaired device beacon is visible but is not made a peer', () async {
     final c = await start();
     c.ingestBeacon('192.168.1.9',
