@@ -448,23 +448,44 @@ class _PhotoContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final path = message.filePath;
     if (path == null) return _placeholder();
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 260, maxWidth: 320),
-        child: Image.file(
-          File(path),
-          fit: BoxFit.cover,
-          // Decode at roughly twice the bubble's size (for hi-dpi) rather than
-          // the photo's full resolution, so a large image doesn't cost megabytes
-          // of memory just to render a thumbnail (finding #20).
-          cacheWidth: 640,
-          cacheHeight: 520,
-          // Handle a missing/unreadable/corrupt file asynchronously here instead
-          // of a synchronous File.existsSync() in build, which blocks the UI
-          // thread on every rebuild.
-          errorBuilder: (_, _, _) => _placeholder(),
+    // Tap (touch) or click (desktop) opens the photo full-screen; a Hero links
+    // the thumbnail to the viewer so the transition animates from the bubble.
+    return GestureDetector(
+      onTap: () => _openViewer(context, path),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 260, maxWidth: 320),
+            child: Hero(
+              tag: 'photo-${message.id}',
+              child: Image.file(
+                File(path),
+                fit: BoxFit.cover,
+                // Decode at roughly twice the bubble's size (for hi-dpi) rather
+                // than the photo's full resolution, so a large image doesn't
+                // cost megabytes of memory just to render a thumbnail (#20).
+                cacheWidth: 640,
+                cacheHeight: 520,
+                // Handle a missing/unreadable/corrupt file asynchronously here
+                // instead of a synchronous File.existsSync() in build, which
+                // blocks the UI thread on every rebuild.
+                errorBuilder: (_, _, _) => _placeholder(),
+              ),
+            ),
+          ),
         ),
+      ),
+    );
+  }
+
+  void _openViewer(BuildContext context, String path) {
+    Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        opaque: false,
+        barrierColor: Colors.black,
+        pageBuilder: (_, _, _) => _PhotoViewer(message: message, path: path),
       ),
     );
   }
@@ -480,6 +501,75 @@ class _PhotoContent extends StatelessWidget {
           ],
         ),
       );
+}
+
+/// Full-screen photo preview opened by tapping a photo bubble. Renders the
+/// image at full resolution inside an [InteractiveViewer] (pinch-to-zoom on
+/// touch, scroll-to-zoom on desktop); tapping the backdrop or the close button
+/// dismisses it.
+class _PhotoViewer extends StatelessWidget {
+  const _PhotoViewer({required this.message, required this.path});
+  final ChatMessage message;
+  final String path;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          // Tap anywhere on the backdrop to dismiss.
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).maybePop(),
+              child: InteractiveViewer(
+                minScale: 1,
+                maxScale: 5,
+                child: Center(
+                  child: Hero(
+                    tag: 'photo-${message.id}',
+                    child: Image.file(
+                      File(path),
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, _, _) => const Icon(
+                        Icons.broken_image_outlined,
+                        color: Colors.white70,
+                        size: 64,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topRight,
+              child: IconButton(
+                tooltip: 'Close',
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
+            ),
+          ),
+          if (message.fileName != null)
+            SafeArea(
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    message.fileName!,
+                    style: const TextStyle(color: Colors.white70, fontSize: 13),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Delivery indicator on an outgoing text bubble: a clock while sending, a
